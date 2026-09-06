@@ -1118,7 +1118,7 @@ async fn the_plan_and_its_rendering_are_written_where_the_user_is_told_to_look()
         &std::fs::read_to_string(fixture.repo.join(".hwahap/plan.json")).unwrap(),
     )
     .unwrap();
-    assert_eq!(plan["schema"], "hwahap/v4");
+    assert_eq!(plan["schema"], "hwahap/v5");
 }
 
 #[tokio::test]
@@ -2194,6 +2194,7 @@ async fn direct_build_adjust_preserves_branch_and_enters_plan() {
     );
     let engine = fixture.engine();
     let input = hwahap::engine::BuildRequest {
+        verification_inputs: vec![],
         user_instruction: "Build without planning".into(),
         objective: REQUEST.into(),
         base_branch: "main".into(),

@@ -1,4 +1,4 @@
-//! The `hwahap/v4` plan contract.
+//! The `hwahap/v5` plan contract.
 //!
 //! The plan is the only thing the coding engine is allowed to act on. Everything the user decided
 //! lives here, and nothing else does: there is no separate answers database, no side table of
@@ -17,7 +17,7 @@ use crate::canonical::Digest;
 use crate::error::{Error, Result};
 
 /// The schema tag written into, and required from, `plan.json`.
-pub const SCHEMA: &str = "hwahap/v4";
+pub const SCHEMA: &str = "hwahap/v5";
 
 /// The twelve decision surfaces. They are a checklist, never a stage.
 pub const SURFACES: [Surface; 12] = [
@@ -489,6 +489,7 @@ pub struct Plan {
     pub structure_stale: bool,
     /// The command run once, after every unit is accepted.
     pub full_suite: String,
+    pub verification_inputs: Vec<String>,
     pub reviews: PlanReviews,
     /// Set by `CONFIRM PLAN` or explicit BUILD; excluded from the plan digest.
     #[serde(deserialize_with = "crate::required_option")]
@@ -544,6 +545,7 @@ impl Plan {
             adjustments: Vec::new(),
             structure_stale: false,
             full_suite: String::new(),
+            verification_inputs: Vec::new(),
             reviews: PlanReviews::default(),
             frozen: None,
         }
@@ -667,10 +669,11 @@ impl Plan {
             "requirements": requirements,
             "decisions": decisions,
             "tests": tests,
+            "verification_inputs": self.verification_inputs,
         }))
     }
 
-    /// Rejects a plan whose schema tag is not `hwahap/v4`.
+    /// Rejects a plan whose schema tag is not `hwahap/v5`.
     ///
     /// Another schema is not imported: the shapes do not correspond, and a silent partial import
     /// would produce a plan the user never confirmed.

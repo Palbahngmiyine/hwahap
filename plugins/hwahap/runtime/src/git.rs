@@ -270,9 +270,18 @@ impl Git {
     /// The `clean` is not optional: an abandoned attempt that leaves a file behind would be counted
     /// as part of the next attempt's changes and could push it out of scope.
     pub fn reset_hard(&self, cwd: &Path, sha: &str) -> Result<()> {
+        self.reset_preserving_inputs(cwd, sha, &[])
+    }
+
+    pub fn reset_preserving_inputs(&self, cwd: &Path, sha: &str, inputs: &[String]) -> Result<()> {
         require_plain_value("revision", sha)?;
+        let exclusions = crate::verification::inputs::cleanup_exclusions(cwd, inputs)?;
         self.run_in(cwd, &["reset", "--hard", sha])?;
-        self.run_in(cwd, &["clean", "-f", "-d", "-x"])?;
+        let mut args = vec!["clean", "-f", "-d", "-x"];
+        for pattern in &exclusions {
+            args.extend(["-e", pattern.as_str()]);
+        }
+        self.run_in(cwd, &args)?;
         Ok(())
     }
 

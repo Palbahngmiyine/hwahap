@@ -131,6 +131,11 @@ local token observation in .hwahap/usage.json; see USAGE.md. Attach parent and r
 before their first work in this run. Missing counters remain unknown; never invent reported_usage. \
 The auditor is always a separate child that never participates in implementation.
 
+For unresolved verification, inspect its `verification_process` journal event and confirm the \
+owned command and runtime have stopped. Submit `verification_recovery` with the exact run_id, \
+verification_id, all_work_stopped:true and observed stop evidence. Missing completion remains \
+unsuccessful; the next step reruns the command. Never stop an unrelated process.
+
 For ordinary PLAN, `CONFIRM PLAN <challenge>` freezes the plan. An approved Codex plan import \
 retains its actual implementation request instead; never fabricate that CONFIRM PLAN line. After \
 valid approval, continue within scope without duplicate BUILD approval. `SHIP <challenge>` marks the finished draft \
@@ -144,6 +149,9 @@ checks pass, and the final review is still fresh.";
 /// Arguments to `hwahap_step`.
 #[derive(Debug, Clone, Deserialize, JsonSchema)]
 pub struct StepArgs {
+    /// Observed stop acknowledgment for an interrupted verification command.
+    #[serde(default)]
+    pub verification_recovery: Option<crate::verification::Recovery>,
     /// Exact Codex plan implementation request and its executable translation, reviewed before BUILD.
     #[serde(default)]
     pub approved_plan: Option<crate::approval::ApprovedPlanRequest>,
@@ -329,6 +337,7 @@ impl Hwahap {
             .advance(
                 &root,
                 NativeInput {
+                    verification_recovery: args.verification_recovery,
                     approved_plan: args.approved_plan,
                     question_response: args.question_response,
                     plan_only: args.plan_only,

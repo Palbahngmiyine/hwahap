@@ -40,6 +40,7 @@ mod grounding;
 mod interview;
 mod lifecycle;
 mod pr_review;
+mod verification;
 pub use adjust_build::AdjustBuildRequest;
 pub use build::{BuildRequest, BuildUnit};
 
@@ -203,6 +204,7 @@ impl Engine {
     fn resolve_planning(&self, request: Option<&str>, plan_only: bool) -> Result<Resolved> {
         crate::approval::reject_unbound_implementation_request(request)?;
         let existing = self.store.recover()?;
+        crate::verification::require_stopped(&self.store)?;
         match (existing, request) {
             (None, Some(request)) => Ok(Resolved::Started(self.start(request, plan_only)?)),
             (None, None) => Err(Error::Rejected(
@@ -543,6 +545,7 @@ impl Engine {
             plan.units = structure.units;
             plan.tests = structure.tests;
             plan.full_suite = structure.full_suite;
+            plan.verification_inputs = structure.verification_inputs;
             plan.structure_stale = false;
             self.save_plan(&plan)?;
         }
@@ -992,7 +995,8 @@ impl Engine {
         let mut findings = adjustment_findings.clone();
 
         for attempt in 1..=MAX_ATTEMPTS {
-            self.git.reset_hard(worktree, &checkpoint)?;
+            self.git
+                .reset_preserving_inputs(worktree, &checkpoint, &plan.verification_inputs)?;
             let role = if attempt == 1 {
                 Role::Implementer
             } else {
@@ -1051,7 +1055,11 @@ impl Engine {
                         match self.verify_unit(plan, unit, worktree, sessions).await? {
                             Ok(()) => {
                                 if unit.probe {
-                                    self.git.reset_hard(worktree, &checkpoint)?;
+                                    self.git.reset_preserving_inputs(
+                                        worktree,
+                                        &checkpoint,
+                                        &plan.verification_inputs,
+                                    )?;
                                     return Ok(UnitOutcome::Accepted);
                                 }
                                 let sha = self.git.commit_all(
@@ -1064,7 +1072,7 @@ impl Engine {
                                         unit.id
                                     ),
                                 )?;
-                                let _ = sha;
+                                self.bind_verified_implementation(plan, unit, worktree, &sha)?;
                                 return Ok(UnitOutcome::Accepted);
                             }
                             Err(reasons) => rejected = Some(reasons),
@@ -1080,7 +1088,8 @@ impl Engine {
                 .collect();
         }
 
-        self.git.reset_hard(worktree, &checkpoint)?;
+        self.git
+            .reset_preserving_inputs(worktree, &checkpoint, &plan.verification_inputs)?;
         Ok(UnitOutcome::Blocked(format!(
             "{} failed {MAX_ATTEMPTS} attempts:\n{}",
             unit.id,
@@ -1111,8 +1120,18 @@ impl Engine {
             )]));
         }
 
+        self.git.run_in(worktree, &["add", "-A"])?;
         for test in plan.tests_for(&unit.id) {
-            let output = self.run_command(worktree, &test.command).await?;
+            let output = self
+                .run_verified_command(
+                    plan,
+                    Some(&unit.id),
+                    Some(&test.id),
+                    crate::verification::Kind::Unit,
+                    &test.command,
+                    worktree,
+                )
+                .await?;
             if !output.success {
                 return Ok(Err(vec![format!(
                     "`{}` failed:\n{}",
@@ -1155,6 +1174,9 @@ impl Engine {
         if review.verdict == Verdict::Fail {
             return Ok(Err(review.findings));
         }
+        if let Err(error) = self.require_verified_unit(plan, unit, worktree) {
+            return Ok(Err(vec![error.to_string()]));
+        }
         Ok(Ok(()))
     }
 
@@ -1168,7 +1190,7 @@ impl Engine {
                 "accepted branch is not clean before the full suite".into(),
             ));
         }
-        let suite = self.run_command(&worktree, &plan.full_suite).await?;
+        let suite = self.run_final_verification(&plan, &worktree).await?;
         if self.git.fingerprint(&worktree)? != suite_tree {
             return Err(Error::BoundaryViolation(
                 "full suite changed the accepted branch or files".into(),
@@ -1177,8 +1199,7 @@ impl Engine {
         if !suite.success {
             run.state = RunState::Blocked {
                 reason: format!(
-                    "every unit was accepted but the full suite `{}` failed:\n{}",
-                    plan.full_suite,
+                    "Final verification failed:\n{}",
                     tail(&suite.combined, 4_000)
                 ),
             };
@@ -1415,7 +1436,16 @@ impl Engine {
             .git
             .run_in(&spec.cwd, &["rev-parse", "--abbrev-ref", "HEAD"])?;
         let before = if crate::session::access_for(role) == crate::session::Access::ReadOnly {
-            Some(self.git.fingerprint(&spec.cwd)?)
+            let inputs = self
+                .store
+                .read_plan()?
+                .map(|p| p.verification_inputs)
+                .unwrap_or_default();
+            Some((
+                self.git.fingerprint(&spec.cwd)?,
+                crate::verification::inputs::digest(&spec.cwd, &inputs)?,
+                inputs,
+            ))
         } else {
             None
         };
@@ -1444,8 +1474,10 @@ impl Engine {
                 role.as_str()
             )));
         }
-        if let Some(before) = before {
-            if self.git.fingerprint(&spec.cwd)? != before {
+        if let Some((before, input_digest, inputs)) = before {
+            if self.git.fingerprint(&spec.cwd)? != before
+                || crate::verification::inputs::digest(&spec.cwd, &inputs)? != input_digest
+            {
                 return Err(Error::BoundaryViolation(format!("the read-only {} session changed the working tree or index; its result was discarded", role.as_str())));
             }
         }
@@ -1625,15 +1657,27 @@ impl Engine {
         Ok(plan)
     }
 
+    #[cfg(test)]
     async fn run_command(&self, cwd: &Path, command: &str) -> Result<CommandOutput> {
         self.run_command_with_limit(cwd, command, 1024 * 1024).await
     }
 
+    #[cfg(test)]
     async fn run_command_with_limit(
         &self,
         cwd: &Path,
         command: &str,
         limit: usize,
+    ) -> Result<CommandOutput> {
+        self.run_command_owned(cwd, command, limit, None).await
+    }
+
+    async fn run_command_owned(
+        &self,
+        cwd: &Path,
+        command: &str,
+        limit: usize,
+        verification_id: Option<&str>,
     ) -> Result<CommandOutput> {
         // Run through a shell because the plan's commands are written the way a person writes
         // them, with pipes and flags. The command comes from a frozen plan the user confirmed.
@@ -1654,11 +1698,19 @@ impl Engine {
         #[cfg(unix)]
         builder.process_group(0);
 
+        if let Some(id) = verification_id {
+            builder.env("HWAHAP_VERIFICATION_ID", id);
+        }
         let mut child = builder
             .spawn()
             .map_err(|e| Error::command(command, e.to_string()))?;
         let pid = child.id();
         let group = CommandGroup(pid);
+        if let Some(id) = verification_id {
+            self.store.append_event(&*self.clock, "verification_process", serde_json::json!({
+                "verification_id":id,"pid":pid,"runtime_pid":std::process::id(),"cwd":cwd,"command":command
+            }))?;
+        }
         let stdout = child.stdout.take().expect("stdout was piped");
         let stderr = child.stderr.take().expect("stderr was piped");
 
@@ -1680,6 +1732,7 @@ impl Engine {
         match result {
             Ok(Ok((stdout, stderr, status))) => Ok(CommandOutput {
                 success: status.success(),
+                exit_code: status.code(),
                 combined: format!(
                     "{}{}",
                     String::from_utf8_lossy(&stdout),
@@ -1689,10 +1742,12 @@ impl Engine {
             Ok(Err(CommandReadError::Io(e))) => Err(Error::command(command, e.to_string())),
             Ok(Err(e @ CommandReadError::Limit { .. })) => Ok(CommandOutput {
                 success: false,
+                exit_code: None,
                 combined: e.to_string(),
             }),
             Err(_) => Ok(CommandOutput {
                 success: false,
+                exit_code: None,
                 combined: format!(
                     "the command did not finish within {}s and was killed",
                     self.config.test_timeout_secs
@@ -1847,6 +1902,7 @@ enum UnitOutcome {
 
 struct CommandOutput {
     success: bool,
+    exit_code: Option<i32>,
     combined: String,
 }
 

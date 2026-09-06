@@ -561,7 +561,9 @@ impl Store {
             }
         }
 
-        match (self.read_run()?, journalled) {
+        let snapshot = self.read_run()?;
+        crate::verification::recover_verifications(self)?;
+        match (snapshot, journalled) {
             (None, None) => Ok(None),
             (None, Some(journalled)) => {
                 // The snapshot was lost between its journal entry and its atomic rename.
@@ -646,6 +648,7 @@ impl Store {
             "plan.md",
             "report.md",
             "usage.json",
+            "verification.json",
             "artifacts",
         ] {
             let from = self.root.join(name);

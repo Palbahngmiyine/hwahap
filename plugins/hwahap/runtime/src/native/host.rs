@@ -16,6 +16,7 @@ use crate::state::Store;
 
 #[derive(Default)]
 pub struct NativeInput {
+    pub verification_recovery: Option<crate::verification::Recovery>,
     pub approved_plan: Option<crate::approval::ApprovedPlanRequest>,
     pub plan_only: bool,
     pub build_confirmed: Option<String>,
@@ -78,7 +79,8 @@ impl NativeHost {
                     .into(),
             ));
         }
-        let actions = usize::from(input.build.is_some())
+        let actions = usize::from(input.verification_recovery.is_some())
+            + usize::from(input.build.is_some())
             + usize::from(input.approved_plan.is_some())
             + usize::from(input.build_confirmed.is_some())
             + usize::from(input.adjust_build.is_some())
@@ -171,6 +173,23 @@ impl NativeHost {
                 "native work belongs to another parent task; do not reuse or stop its agents"
                     .into(),
             ));
+        }
+        if let Some(recovery) = &input.verification_recovery {
+            if active.contains_key(root) || orphan(&store)?.is_some() {
+                return Err(Error::Rejected(
+                    "stop active native work before verification recovery".into(),
+                ));
+            }
+            let _lock = RepoLock::acquire(root)?;
+            crate::verification::acknowledge_interrupted(
+                &store,
+                &crate::clock::SystemClock,
+                recovery,
+            )?;
+            return Ok(NativeProgress {
+                outcome: Engine::open(root)?.status()?,
+                dispatch: None,
+            });
         }
         if input.build_confirmed.is_some()
             || input.approved_plan.is_some()

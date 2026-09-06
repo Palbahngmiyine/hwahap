@@ -22,6 +22,7 @@ fn request(f: &Fixture) -> ApprovedPlanRequest {
             source_head: git(&f.repo, &["rev-parse", "HEAD"]),
         },
         contract: BuildRequest {
+            verification_inputs: vec![],
             user_instruction: instruction,
             objective: "Create feature".into(),
             base_branch: "main".into(),

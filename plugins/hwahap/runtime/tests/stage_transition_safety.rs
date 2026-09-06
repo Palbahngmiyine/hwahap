@@ -14,6 +14,7 @@ async fn reviewed() -> Fixture {
     let engine = f.engine();
     engine
         .start_build(&BuildRequest {
+            verification_inputs: vec![],
             user_instruction: "Build without planning".into(),
             objective: "Create output".into(),
             branch: "codex/stage-safety".into(),

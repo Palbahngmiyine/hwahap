@@ -44,6 +44,11 @@ pub fn structural_errors(plan: &Plan) -> Result<Vec<Violation>> {
     check_empty_fields(plan, &mut out);
     check_references(plan, &mut out);
     check_cycles(plan, &mut out);
+    for input in &plan.verification_inputs {
+        if crate::verification::inputs::validate_path(input).is_err() {
+            out.push(Violation::new("invalid_verification_input", input));
+        }
+    }
     Ok(sorted_unique(out))
 }
 
@@ -1205,7 +1210,7 @@ mod tests {
         assert_eq!(violation.code, "schema");
         assert_eq!(
             violation.detail,
-            "the plan declares schema \"hwahap/v2\", but hwahap/v4 is required"
+            "the plan declares schema \"hwahap/v2\", but hwahap/v5 is required"
         );
         assert!(
             blockers(&plan).contains(&violation),
@@ -1463,7 +1468,14 @@ mod tests {
         ];
         for (expected, mutate) in cases {
             let plan = mutated(mutate);
-            let violation = sole(&blockers(&plan));
+            let violations = blockers(&plan);
+            let expected_count = if expected == "U1 cites acceptance A9" {
+                2
+            } else {
+                1
+            };
+            assert_eq!(violations.len(), expected_count);
+            let violation = &violations[0];
             assert_eq!(violation.code, "dangling_reference", "{expected}");
             assert_eq!(
                 violation.detail,
@@ -1939,9 +1951,16 @@ mod tests {
             });
             p.units[0].acceptance_ids.push("A3".into());
         });
-        let violation = sole(&blockers(&plan));
-        assert_eq!(violation.code, "orphan_acceptance");
-        assert_eq!(violation.detail, "A3 is cited by no test");
+        assert_eq!(
+            blockers(&plan),
+            vec![
+                Violation::new("orphan_acceptance", "A3 is cited by no test"),
+                Violation::new(
+                    "uncovered_unit_acceptance",
+                    "U1 has no own test for acceptance A3"
+                ),
+            ]
+        );
     }
 
     #[test]
@@ -1956,9 +1975,16 @@ mod tests {
                 probe: false,
             })
         });
-        let violation = sole(&blockers(&plan));
-        assert_eq!(violation.code, "untested_unit");
-        assert_eq!(violation.detail, "U4 has no test");
+        assert_eq!(
+            blockers(&plan),
+            vec![
+                Violation::new(
+                    "uncovered_unit_acceptance",
+                    "U4 has no own test for acceptance A1"
+                ),
+                Violation::new("untested_unit", "U4 has no test"),
+            ]
+        );
     }
 
     #[test]

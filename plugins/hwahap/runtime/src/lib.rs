@@ -28,6 +28,7 @@ pub mod render;
 pub mod session;
 pub mod state;
 pub mod validate;
+pub mod verification;
 
 pub use error::{Error, Result};
 pub mod approval;

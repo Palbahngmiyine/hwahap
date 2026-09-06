@@ -135,6 +135,7 @@ async fn direct_build_conflict_waits_for_user_then_reopens_interactive_plan_on_o
     let engine = f.engine();
     engine
         .start_build(&BuildRequest {
+            verification_inputs: vec![],
             user_instruction: "Build without planning".into(),
             objective: "Create output".into(),
             base_branch: "main".into(),

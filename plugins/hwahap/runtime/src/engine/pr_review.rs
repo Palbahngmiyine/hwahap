@@ -143,6 +143,7 @@ impl Engine {
                     .into(),
             ));
         }
+        self.require_current_verifications(plan)?;
         Ok(())
     }
     pub(super) async fn review_pr(

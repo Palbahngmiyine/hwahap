@@ -106,9 +106,19 @@ impl Engine {
                         "PR repair changed nothing or exceeded the frozen scope".into(),
                     ));
                 }
+                self.git.run_in(&worktree, &["add", "-A"])?;
                 let before = self.git.fingerprint(&worktree)?;
                 for command in commands {
-                    let check = self.run_command(&worktree, &command).await?;
+                    let check = self
+                        .run_verified_command(
+                            &plan,
+                            None,
+                            None,
+                            crate::verification::Kind::Unit,
+                            &command,
+                            &worktree,
+                        )
+                        .await?;
                     if self.git.fingerprint(&worktree)? != before {
                         return Err(Error::BoundaryViolation(
                             "PR repair check changed files".into(),
@@ -126,7 +136,11 @@ impl Engine {
                                 "command":command,"output":check.combined,"patch":patch}),
                         )?;
                         // Only discard this owned attempt after durable reproduction evidence exists.
-                        self.git.reset_hard(&worktree, &p.binding.head)?;
+                        self.git.reset_preserving_inputs(
+                            &worktree,
+                            &p.binding.head,
+                            &plan.verification_inputs,
+                        )?;
                         return Ok(self.report(&run, format!("PR repair check failed: `{command}`. Evidence retained; retrying within the remaining repair budget.")));
                     }
                 }
@@ -201,6 +215,13 @@ impl Engine {
             return Err(Error::BoundaryViolation(
                 "repair publication lost its clean branch or matching draft".into(),
             ));
+        }
+        let final_checks = self.run_final_verification(&plan, &worktree).await?;
+        if !final_checks.success {
+            return Err(Error::Rejected(format!(
+                "repaired candidate verification failed: {}",
+                final_checks.combined
+            )));
         }
         let remote = self.forge.head_sha(&worktree, &p.binding.pr_url)?;
         if remote != prepared.base && remote != prepared.commit {

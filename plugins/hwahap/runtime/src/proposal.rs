@@ -240,6 +240,8 @@ pub struct StructureProposal {
     pub tests: Vec<Test>,
     /// The command run once after every unit is accepted.
     pub full_suite: String,
+    #[serde(default)]
+    pub verification_inputs: Vec<String>,
 }
 
 impl StructureProposal {
@@ -249,7 +251,7 @@ impl StructureProposal {
         r#""acceptance":[{"id":"A1","requirement_ids":["R1"],"observable":"..."}],"#,
         r#""units":[{"id":"U1","title":"...","paths":["src/"],"acceptance_ids":["A1"],"depends_on":[],"probe":false}],"#,
         r#""tests":[{"id":"T1","command":"...","acceptance_ids":["A1"],"unit_id":"U1"}],"#,
-        r#""full_suite":"..."}"#
+        r#""full_suite":"...","verification_inputs":[]}"#
     );
 
     /// Parses and validates the structure. Cross-references into the plan are checked here; the

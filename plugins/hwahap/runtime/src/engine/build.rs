@@ -16,6 +16,9 @@ pub struct BuildRequest {
     pub branch: String,
     pub units: Vec<BuildUnit>,
     pub full_suite: String,
+    /// Repository-relative test inputs, including ignored fixtures.
+    #[serde(default)]
+    pub verification_inputs: Vec<String>,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize, JsonSchema)]
@@ -40,6 +43,7 @@ impl BuildRequest {
         plan.execution_authorization = Some(self.user_instruction.clone());
         plan.base_commit = Some(base_commit.into());
         plan.full_suite = self.full_suite.clone();
+        plan.verification_inputs = self.verification_inputs.clone();
         for (index, unit) in self.units.iter().enumerate() {
             let n = index + 1;
             let (r, a, u) = (format!("R{n}"), format!("A{n}"), format!("U{n}"));
@@ -272,6 +276,7 @@ mod tests {
 
     fn request() -> BuildRequest {
         BuildRequest {
+            verification_inputs: vec![],
             user_instruction: "Skip planning and implement the requested check".into(),
             objective: "Validate settings".into(),
             base_branch: "main".into(),
