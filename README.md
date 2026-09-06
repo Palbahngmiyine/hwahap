@@ -37,6 +37,10 @@ acceptance·테스트·허용 경로를 바꾸는 요청은 `user_input`으로 P
 
 hwahap은 스킬 하나와 MCP 서버 하나로 이루어진다. 둘을 따로 설치한다.
 
+이 저장소를 clone한 디렉터리에서 아래 명령을 실행한다. 빌드 없이 설치하려면
+[Releases](https://github.com/Palbahngmiyine/hwahap/releases)의 운영체제별 압축 파일을 사용한다.
+배포 절차와 압축 파일 설치법은 [RELEASING.md](RELEASING.md)에 있다.
+
 ```sh
 # 현재 소스를 검증한 뒤 release를 빌드한다.
 cargo test --manifest-path runtime/Cargo.toml --all-targets

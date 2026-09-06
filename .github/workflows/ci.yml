@@ -2,15 +2,19 @@ name: Hwahap
 
 on:
   pull_request:
-  push:
-    branches: [main]
+  workflow_call:
+    inputs:
+      ref:
+        type: string
+        required: false
+        default: ""
   workflow_dispatch:
 
 permissions:
   contents: read
 
 concurrency:
-  group: hwahap-${{ github.ref }}
+  group: hwahap-${{ github.workflow }}-${{ inputs.ref || github.ref }}
   cancel-in-progress: true
 
 env:
@@ -36,6 +40,7 @@ jobs:
       - name: Check out the exact revision
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          ref: ${{ inputs.ref || github.sha }}
           persist-credentials: false
 
       - name: Install the stable Rust toolchain
@@ -68,6 +73,7 @@ jobs:
       - name: Check out the exact revision
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          ref: ${{ inputs.ref || github.sha }}
           persist-credentials: false
 
       - name: Enforce the static simplicity gates
