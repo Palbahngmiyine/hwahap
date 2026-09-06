@@ -61,7 +61,11 @@ uncertain routing returns to PLAN through user_input. Both paths re-review the u
 When question_batch is present, present its exact question bodies and all option labels using the \
 host's actually available request_user_input or request_user_input_async capability. request_user_input \
 may require Codex Plan mode; do not call an unavailable tool, invent AskUserQuestion, or switch modes. \
-Use the asynchronous question UI if available in the current mode. Never shorten away alternatives. \
+Prefer the asynchronous question UI when it can display every option. Map question to title and \
+option labels to options; descriptions belong only in a supported option-description field. \
+Keep choices out of the question body. Keep rationale, sources and confidence in .hwahap/plan.md; \
+link that document when detail is useful. Show the question card once, without repeating the \
+question batch or full run message in commentary. Never shorten away alternatives. \
 If the UI cannot represent every option, use a free-text question showing all full labels; if no \
 question tool is available, show that same complete page in the conversation. Relay actual answers \
 as question_response:{batch_id,responses:[{id,answer}]} with the unchanged batch ID and answer text. \

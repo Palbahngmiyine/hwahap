@@ -66,14 +66,25 @@ Acceptance·테스트·허용 경로 변경은 `user_input`으로 PLAN에서 결
 ## 질문 UI와 원문 응답
 
 `question_batch`는 현재 계획에 결속된 `batch_id`와 최대 3개의 `questions`를 반환한다.
-각 질문은 `id`, 전체 `question`, `options`의 정확한 `label`·`description`을 가진다.
+각 질문은 `id`, 짧은 `question`, `options`의 정확한 `label`·`description`을 가진다.
 추천 대안은 첫 번째에 `(Recommended)`로 표시되며, `UNKNOWN`은 결정 보류다.
 영역 제외 제안에는 제외와 적용 유지 선택지가 있다. 적용 유지를 선택하면 제외 제안을 철회한다.
 
 호스트는 실제 호출 가능한 `request_user_input` 또는 `request_user_input_async`를 확인한다.
 각 도구의 모드·질문 수·선택지 수 조건을 확인하고 현재 호스트에서 지원하는 방식으로 전달한다.
-질문 본문·대안·추천 근거 전체를 표시한다. 선택지 수가 UI 용량을 넘으면 전체 label을 표시한 자유입력을 사용한다.
-텍스트 전달 환경에서는 전체 질문을 표시하고 원문으로 응답을 받는다.
+본문은 하나의 판단을 묻는 한 문장으로 쓰고, 선택 결과는 선택지에 둔다.
+추천 근거·출처·확신도는 `.hwahap/plan.md`에서 확인한다.
+`request_user_input_async`에서는 `question`을 `title`에, 각 `label`을 `options`에 전달한다.
+`description`은 해당 필드를 지원하는 UI에서 선택지 설명으로 전달한다.
+모든 선택지를 담을 수 있는 UI를 우선한다. 자유입력 전용 환경에서는 본문 다음에 선택지를 한 번 표시한다.
+질문 카드를 표시한 뒤 진행 메시지는 다음 작업만 짧게 알린다.
+
+예: **모델 카탈로그 변경을 언제 적용할까요?**
+
+- 새 실행부터 적용 (추천)
+- 진행 중 실행에도 적용
+- 아직 결정하지 못함
+
 질문 ID와 사용자가 제출한 원문을 아래 구조로 보존한다. 정확한 절차는 MCP `instructions`를 따른다.
 
 ```json

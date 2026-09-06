@@ -243,34 +243,15 @@ fn render_recommendation(recommendation: &Recommendation, md: &mut Md) {
 /// readable in a chat message rather than in a document.
 fn render_compact_recommendation(recommendation: &Recommendation, md: &mut Md) {
     match recommendation {
-        Recommendation::Recommended {
-            choice,
-            rationale,
-            evidence,
-            tradeoffs,
-            impact,
-            confidence,
-        } => {
+        Recommendation::Recommended { choice, .. } => {
             md.line(format!("Recommendation: {}", inline(choice)));
-            md.prose_line("Rationale:", rationale);
-            md.id_line("Evidence:", evidence);
-            md.prose_line("Trade-offs:", tradeoffs);
-            md.id_line("Impact:", impact);
-            md.line(format!("Confidence: {}", confidence_label(*confidence)));
         }
-        Recommendation::NoRecommendation { rationale } => {
-            md.line("Recommendation: none");
-            md.prose_line("Rationale:", rationale);
-        }
-        Recommendation::ProbeRequired {
-            probe_unit,
-            rationale,
-        } => {
+        Recommendation::NoRecommendation { .. } => md.line("Recommendation: none"),
+        Recommendation::ProbeRequired { probe_unit, .. } => {
             md.line(format!(
                 "Recommendation: probe {} first",
                 inline(probe_unit)
             ));
-            md.prose_line("Rationale:", rationale);
         }
     }
 }
@@ -624,22 +605,6 @@ impl Md {
         for id in sorted_ids(ids) {
             self.line(format!("- {}", inline(id)));
         }
-    }
-
-    fn prose_line(&mut self, label: &str, items: &[String]) {
-        if items.is_empty() {
-            return;
-        }
-        let joined: Vec<String> = items.iter().map(|item| inline(item)).collect();
-        // Semicolons, not commas: these are sentences, and sentences contain commas.
-        self.line(format!("{label} {}", joined.join("; ")));
-    }
-
-    fn id_line(&mut self, label: &str, ids: &[String]) {
-        if ids.is_empty() {
-            return;
-        }
-        self.line(format!("{label} {}", sorted_join(ids)));
     }
 
     fn finish(mut self) -> String {
@@ -1812,11 +1777,6 @@ mod tests {
                 "ALT2. 호출하지 않는다\n",
                 "\n",
                 "Recommendation: ALT1\n",
-                "Rationale: keeps validation parity with apply\n",
-                "Evidence: F7\n",
-                "Trade-offs: a webhook failure becomes a dry-run failure\n",
-                "Impact: api, tests\n",
-                "Confidence: high\n",
                 "\n",
                 "Answer forms:\n",
                 "- C<n>=REC — take the recommendation as displayed\n",
@@ -1867,11 +1827,10 @@ mod tests {
             rationale: vec!["no basis".into(), "genuinely a taste call".into()],
         };
         let none = frontier_markdown(&plan, &["C1".into()]).unwrap();
-        assert!(
-            none.contains("Recommendation: none\nRationale: no basis; genuinely a taste call\n"),
-            "{none}"
-        );
+        assert!(none.contains("Recommendation: none\n"), "{none}");
         assert!(!none.contains("Confidence:"), "{none}");
+        assert!(!none.contains("no basis"), "{none}");
+        assert!(plan_markdown(&plan).unwrap().contains("no basis"));
 
         plan.decisions[0].recommendation = Recommendation::ProbeRequired {
             probe_unit: "U9".into(),

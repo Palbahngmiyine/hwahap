@@ -19,6 +19,8 @@ When the user explicitly skips planning, use `build` with their verbatim authori
 For repairs under unchanged contracts use `adjust_build`; contract changes reopen PLAN.
 
 Use `question_batch` and `question_response` for decision rounds.
+Keep questions to one sentence and outcomes in options; show supporting detail through plan links.
+Keep progress updates brief and present parallel work units in a compact table.
 Select an actually callable Codex question tool under its current mode and input limits.
 See [USAGE.md](../../USAGE.md) for UI adaptation. Record answers from actual submitted responses;
 keep defaults, cancellation and timeout in a waiting state. Forward user messages verbatim.

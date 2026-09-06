@@ -225,6 +225,11 @@ apply; the user confirms that separately.
 
 ## Rules for each decision you propose
 
+- Write `question` as one short sentence asking for one material choice (aim for 100 characters).
+- Write each alternative `value` as a short, distinct outcome (aim for 40 characters).
+  Put option-specific outcomes in alternatives, and essential shared context in the question.
+  Keep rationale, sources, confidence and trade-offs in their structured recommendation fields.
+  Preserve material meaning when more words are necessary; never truncate an existing choice.
 - Two or more alternatives that are genuinely different, not a rephrasing of each other.
 - Make the desired and undesired outcomes explicit in the question and alternatives. For example,
   ask what happens to an existing file: preserve its bytes or replace them; do not ask merely
