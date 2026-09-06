@@ -20,7 +20,8 @@ git push origin main v0.1.0
 다음 버전에는 위 명령의 버전을 바꾼다. `fix`는 patch, `feat`는 minor,
 호환되지 않는 공개 인터페이스 변경은 major 증가를 검토한다. 내부 `hwahap/v4` 기록 형식은
 패키지 버전과 별개다. 기존 commit의 `Release-As` footer는 사용하지 않는다.
-실패 시 Actions에서 실패한 job을 재실행하거나 Release의 수동 실행에 기존 tag를 입력한다.
+게시 실패 시 Actions에서 실패한 job을 재실행한다. Release의 수동 실행은 지정한 ref를
+빌드·검증하고 Actions artifact를 만드는 검증 전용 실행이며 릴리스를 게시하지 않는다.
 공개된 릴리스의 파일은 덮어쓰지 않는다. 고칠 내용은 새 버전으로 배포한다.
 
 ## 사용자: 바이너리 포함 archive로 설치

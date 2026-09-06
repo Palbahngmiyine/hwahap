@@ -5,23 +5,24 @@ on:
     tags: ['v*']
   workflow_dispatch:
     inputs:
-      tag:
-        description: Existing version tag to publish or retry
+      ref:
+        description: Git ref to validate without publishing
         required: true
+        default: main
         type: string
 
 permissions:
   contents: read
 
 concurrency:
-  group: release-${{ inputs.tag || github.ref_name }}
+  group: release-${{ inputs.ref || github.ref_name }}
   cancel-in-progress: false
 
 jobs:
   ci:
     uses: ./.github/workflows/ci.yml
     with:
-      ref: ${{ inputs.tag || github.ref_name }}
+      ref: ${{ inputs.ref || github.ref_name }}
 
   packages:
     needs: ci
@@ -40,15 +41,18 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          ref: ${{ inputs.tag || github.ref_name }}
+          ref: ${{ inputs.ref || github.ref_name }}
           persist-credentials: false
       - name: Build and smoke-test the versioned plugin package
         env:
           TARGET: ${{ matrix.target }}
-          RELEASE_TAG: ${{ inputs.tag || github.ref_name }}
+          RELEASE_TAG: ${{ inputs.ref || github.ref_name }}
+          PUBLISH: ${{ github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v') }}
         run: |
-          test "$RELEASE_TAG" = "v$(cat plugins/hwahap/version.txt)"
-          git show-ref --verify "refs/tags/$RELEASE_TAG"
+          if [ "$PUBLISH" = true ]; then
+            test "$RELEASE_TAG" = "v$(cat plugins/hwahap/version.txt)"
+            git show-ref --verify "refs/tags/$RELEASE_TAG"
+          fi
           rustup toolchain install stable --profile minimal
           rustup default stable
           rustup target add "$TARGET"
@@ -68,6 +72,7 @@ jobs:
           if-no-files-found: error
 
   publish:
+    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
     needs: packages
     runs-on: ubuntu-latest
     permissions:
@@ -81,7 +86,7 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
-          RELEASE_TAG: ${{ inputs.tag || github.ref_name }}
+          RELEASE_TAG: ${{ inputs.ref || github.ref_name }}
         run: |
           if gh release view "$RELEASE_TAG" --json isDraft --jq .isDraft > release-draft.txt; then
             if [ "$(cat release-draft.txt)" != true ]; then
