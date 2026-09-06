@@ -1,0 +1,58 @@
+# Hwahap
+
+**Hwahap 0.1.0**은 구현 계획, 코드 변경, 테스트, draft PR 검토를 연결하는 Codex plugin입니다.
+스킬과 로컬 MCP 서버가 함께 설치됩니다. 모델이 계획을 정리하면 사용자가 확정하고,
+이후 구현과 검증을 진행합니다.
+
+## 설치
+
+필요한 것: plugin 명령을 지원하는 Codex CLI/desktop, Git, 인증된
+[GitHub CLI](https://cli.github.com/manual/gh_auth_login), Astra 부모 모델과 Luna·Astra native agent를
+실행할 수 있는 Codex 환경입니다. 설치·MCP 연결은 Codex CLI **0.152.1**에서 검증했습니다.
+macOS 15 이상(Apple Silicon/Intel), Linux x86_64(glibc 2.39 이상)용 바이너리를 제공합니다.
+Windows와 Linux ARM은 현재 설치용 바이너리를 제공하지 않습니다.
+
+```sh
+codex plugin marketplace add Palbahngmiyine/hwahap --ref v0.1.0
+codex plugin add hwahap@hwahap
+```
+
+Codex에서 **새 작업**을 열고 Hwahap 스킬을 선택하거나 `$hwahap`을 호출하세요.
+MCP는 plugin과 함께 등록되므로 `codex mcp add`를 따로 실행하지 않습니다.
+첫 실행에 약 1분이 걸릴 수 있습니다. 해당 버전의 런타임을 GitHub Releases에서 내려받아
+SHA-256과 실행 버전을 확인하며, 이후에는 로컬 캐시를 사용합니다. Rust는 필요 없습니다.
+
+## 사용 예시
+
+- `$hwahap 이 기능의 구현 계획만 세워줘.`
+- `$hwahap 이 버그를 수정하고 테스트와 draft PR 검토까지 진행해줘.`
+- `$hwahap 확정한 계획을 구현해줘.`
+
+실제 Git 저장소에서 시작하세요. PLAN 단계에서는 질문에 답하고 표시된 `CONFIRM PLAN ...`을
+직접 입력합니다. BUILD는 코드·테스트·commit·draft PR을 만들 수 있습니다.
+완료한 draft를 ready로 바꾸려면 표시된 `SHIP ...`을 직접 입력합니다. PR 병합은 자동으로 하지 않습니다.
+MCP 프로세스는 로컬에서 동작하며, 사용 중인 Codex 모델과 GitHub에는 작업에 필요한 정보가 전달됩니다.
+
+## 확인·업데이트·문제 해결
+
+```sh
+codex plugin list
+codex mcp list
+```
+
+다음 버전으로 올릴 때는 marketplace ref를 해당 릴리스 태그로 다시 지정하고 plugin을 재설치한 뒤
+새 작업을 시작합니다. 예: `codex plugin marketplace add Palbahngmiyine/hwahap --ref v0.2.0`.
+기존 standalone Hwahap을 설치했다면 기존 MCP 등록과 전역 스킬을 정리해 중복 로딩을 피하세요.
+plugin 설치는 기존 설정을 자동 삭제하지 않습니다.
+
+- 다운로드 실패: 네트워크와 해당 버전의 [Release](https://github.com/Palbahngmiyine/hwahap/releases)를 확인한 뒤 재시작합니다.
+- 오프라인 설치: [릴리스·설치 가이드](RELEASING.md)의 바이너리 포함 archive를 사용합니다.
+- GitHub 인증 실패: `gh auth status`로 확인합니다. Hwahap은 별도 OpenAI API key를 요구하지 않습니다.
+- 모델이나 native agent 기능이 없음: 해당 기능이 제공되는 Codex 환경이 필요합니다. 다른 모델로 몰래 대체하지 않습니다.
+
+[운영 절차](plugins/hwahap/OPERATIONS.md) · [상세 구조](plugins/hwahap/ARCHITECTURE.md) ·
+[검증 범위](plugins/hwahap/PLATFORM.md) · [원본 이력](MIGRATION.md)
+
+패키지 버전은 `0.1.0`이며, 내부 `hwahap/v4`는 기존 실행 기록의 형식 식별자입니다.
+GitHub repo marketplace로 배포하며 OpenAI의 공식 public plugin directory에 등록된 제품은 아닙니다.
+설치 구조는 [공식 OpenAI plugin 문서](https://developers.openai.com/plugins/build/plugins)를 따릅니다.

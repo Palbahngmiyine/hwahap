@@ -1,4 +1,4 @@
-# hwahap v4
+# Hwahap architecture
 
 기본적으로 `PLAN → BUILD → ADJUST → SHIPPING`을 진행하며 PLAN과 BUILD를 따로 사용할 수 있는
 Codex 스킬과 local STDIO MCP 서버다. BUILD는 구현·검증·draft PR 검토를 포함하고,
@@ -35,50 +35,19 @@ acceptance·테스트·허용 경로를 바꾸는 요청은 `user_input`으로 P
 
 ## 2. 설치
 
-hwahap은 스킬 하나와 MCP 서버 하나로 이루어진다. 둘을 따로 설치한다.
-
-이 저장소를 clone한 디렉터리에서 아래 명령을 실행한다. 빌드 없이 설치하려면
-[Releases](https://github.com/Palbahngmiyine/hwahap/releases)의 운영체제별 압축 파일을 사용한다.
-배포 절차와 압축 파일 설치법은 [RELEASING.md](RELEASING.md)에 있다.
-
-```sh
-# 현재 소스를 검증한 뒤 release를 빌드한다.
-cargo test --manifest-path runtime/Cargo.toml --all-targets
-cargo build --release --manifest-path runtime/Cargo.toml
-bin/hwahap --version
-
-# 기존 설치를 제거한 빈 경로에 현재 스킬과 release만 설치한다.
-hwahap_install="${CODEX_HOME:-$HOME/.codex}/skills/hwahap"
-test ! -e "$hwahap_install"
-mkdir -p "$hwahap_install/runtime/target/release"
-rsync -a --exclude target --exclude .git --exclude .hwahap ./ "$hwahap_install/"
-cp runtime/target/release/hwahap "$hwahap_install/runtime/target/release/"
-codex mcp add hwahap -- "$hwahap_install/bin/hwahap"
-```
-
-`bin/hwahap`은 같은 설치의 `runtime/target/release/hwahap`만 실행하고 `--version`이
-`version.txt`에 기록된 버전과 일치하는지 확인한다. 환경변수·debug·PATH의 다른 바이너리를 탐색하지 않는다.
-진단은 stderr로, MCP 응답은 stdout으로 보낸다. 등록 후 Codex에서 연결을 새로 열어
-`initialize`의 서버 버전과 제공 도구를 확인한다. 등록 명령은 [공식 MCP 문서](https://developers.openai.com/codex/mcp)를 따른다.
-
-필요한 것: Rust 1.90 이상, POSIX 환경, `git`, 인증된 `gh`, 기본 하위 에이전트의 생성·follow-up·대기·중단 도구를
-제공하는 Codex 호스트다. `.hwahap/`은 대상 저장소의 `.gitignore`에 있어야 한다.
-런처와 스킬을 설치한 뒤 실제 호스트에서 MCP 연결과 하위 에이전트 도구의 제공 여부를 확인한다.
-
-이 저장소 루트가 스킬 디렉터리다. 스킬 복사와 MCP 등록을 분리한다.
-플랫폼의 보장과 이 구현에서 확인한 범위는 [PLATFORM.md](PLATFORM.md)에 기록한다.
-일반 개발 사이클, 큰 기능의 단계별 진행, 승인·복구와 완료 보고는
-[운영 절차](OPERATIONS.md)를 따른다.
+스킬과 MCP 서버는 하나의 Codex plugin으로 설치한다. [설치 안내](README.md)를 따른다.
+`bin/hwahap`은 포함된 release 또는 검증한 버전별 캐시만 실행한다. 캐시가 없으면
+`bin/install-runtime`이 해당 버전의 GitHub Release 바이너리를 다운로드한다.
+진단은 stderr, MCP 응답은 stdout을 사용한다.
 
 ## 3. 구조
 
 ```
 hwahap/
-├── SKILL.md                       호스트를 MCP 실행 절차로 연결
-├── README.md                      이 문서
+├── skills/hwahap/SKILL.md                       호스트를 MCP 실행 절차로 연결
+├── ARCHITECTURE.md                이 문서
 ├── PLATFORM.md                    플랫폼 근거, 검증 범위와 한계
 ├── bin/hwahap                     바이너리를 찾아 exec 하는 POSIX sh 런처
-├── tests/gates.sh                 정적 단순성 게이트
 └── runtime/                       Rust 크레이트
     ├── src/                       모듈당 책임 하나
     └── tests/
@@ -204,7 +173,7 @@ PR 보고서는 검토·수정 후와 SHIP 직전에 현재 검토·사용량 �
 ```sh
 cargo test --manifest-path runtime/Cargo.toml --all-targets
 cargo clippy --manifest-path runtime/Cargo.toml --all-targets -- -D warnings
-tests/gates.sh
+../../tests/gates.sh
 ```
 
 `gates.sh`는 tool 수, 스킬 크기, 기본 모델·effort 및 금지된 실행 경로 같은 정적 계약을 검사한다.

@@ -175,7 +175,7 @@ PR 수정·merge만으로 설치된 스킬과 MCP 실행 파일이 갱신되지�
 
 ## 4. 설치와 실행 환경
 
-설치는 [README.md](README.md)의 로컬 MCP 등록과 스킬 복사 절차를 따른다.
+설치는 [README.md](README.md)의 plugin 설치 절차를 따른다.
 [bin/hwahap](bin/hwahap)은 빌드된 바이너리를 찾아 실행하며, 진단은 stderr에 쓰고
 stdout은 MCP 전송에 사용한다. 이 구현은 스킬 디렉터리 배치를 유지하며 별도 플러그인 패키징에
 의존하지 않는다.

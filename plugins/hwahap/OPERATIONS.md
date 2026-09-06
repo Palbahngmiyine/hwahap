@@ -75,7 +75,7 @@ Codex에서 전체 계획에 대한 실제 `PLEASE IMPLEMENT THIS PLAN:` 요청�
 
 기본 profile에서 Luna는 저장소 사실을 조사하고, Astra는 선택지·추천과 구현 구조를 만든다.
 부모 Astra는 추천·합성·충돌 재계획과 재작업을 맡고, 세 자식의 작성·검토 책임을 분리한다.
-기본 모델·effort와 사용자 설정은 [README의 profile 정책](README.md#5-모델effort-정책)을 따른다.
+기본 모델·effort와 사용자 설정은 [README의 profile 정책](ARCHITECTURE.md#5-모델effort-정책)을 따른다.
 
 PLAN은 선행 조건이 해결된 질문들의 집합인 frontier를 계산한다. 논리적 라운드 안의 질문은
 최대 3개씩 질문 UI에 전달하며, 나머지 질문과 모든 대안은 유지한다. 해당 답변을 받아 `Refining`에서
