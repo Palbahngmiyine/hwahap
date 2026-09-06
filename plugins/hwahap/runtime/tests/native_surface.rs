@@ -807,3 +807,39 @@ async fn fingerprint_excludes_only_root_runtime_and_observes_untracked_modes() {
     std::fs::set_permissions(&nested, std::fs::Permissions::from_mode(mode ^ 0o100)).unwrap();
     assert_ne!(git.fingerprint(temp.path()).unwrap(), with_nested);
 }
+
+#[tokio::test]
+async fn t14_execution_deadline_starts_at_registration_after_bounded_handoff() {
+    use hwahap::engine::Sessions;
+    let (_temp, broker, spec) = fixture(8, 2).await;
+    let runner = broker.clone();
+    let task = tokio::spawn(async move { runner.run(&spec).await });
+    let request = dispatch(&broker).await;
+    tokio::time::sleep(Duration::from_millis(1200)).await;
+    broker
+        .register(&NativeRegistration {
+            dispatch_id: request.dispatch_id.clone(),
+            agent_id: "late-worker".into(),
+            decision_digest: Some(request.decision.digest.clone()),
+        })
+        .unwrap();
+    tokio::time::sleep(Duration::from_millis(1200)).await;
+    assert!(
+        !task.is_finished(),
+        "handoff time consumed the execution deadline"
+    );
+    broker
+        .complete(NativeCompletion {
+            dispatch_id: request.dispatch_id.clone(),
+            agent_id: "late-worker".into(),
+            decision_digest: Some(request.decision.digest.clone()),
+            final_message:
+                serde_json::json!({"dispatch_id":request.dispatch_id,"result":{"facts":[]}})
+                    .to_string(),
+            agent_stopped: true,
+            reported_usage: None,
+        })
+        .unwrap();
+    task.await.unwrap().unwrap();
+    broker.finish().unwrap();
+}

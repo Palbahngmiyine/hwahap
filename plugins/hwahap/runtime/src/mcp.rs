@@ -37,18 +37,14 @@ without asking the user; `repair_translation` means repair and resubmit approved
 show `message` and stop. Pass the user's reply verbatim in `user_input`. Never compose, complete, \
 or infer a CONFIRM PLAN or SHIP line on the user's behalf — only the user may type one.
 
-When the user already submitted PLEASE IMPLEMENT THIS PLAN: followed by the entire approved Codex \
-plan, use approved_plan instead of restarting request or asking for CONFIRM PLAN again. Relay the exact \
-implementation_request and trimmed approved markdown, its SHA-256 markdown_digest, inspected source_head, \
-and a complete executable contract (BuildRequest). This is approved-plan translation, not skipped planning. \
-For an existing unexecuted draft include replaces_plan_digest equal to its full current digest; preserve \
-its original history. Never replace executing/frozen work. The engine journals approval separately, reviews \
-the entire translation independently, then proceeds into BUILD without another approval. Host-relayed text \
-is not independent authentication. A review defect preserves approval: repair only the translation and \
-resubmit approved_plan with the new current draft digest; generic user_input cannot discard that approval. \
-Ask only for genuinely new material choices, never the same approval. Do not fabricate an approval message \
-from agreement or a proposed plan alone. SHIP remains separate. Unsupported old runtimes require a verified \
-upgrade; never silently send this field to a runtime whose tool schema omits it.
+For an already approved plan, use approved_plan with the verbatim implementation_request, approved \
+markdown, SHA-256 markdown_digest, inspected source_head and executable contract. Inline handoff accepts \
+PLEASE IMPLEMENT THIS PLAN: plus the full plan. A referenced handoff uses approval.reference with the \
+actual source_reference, disposition, plan_digest and implementation_request_digest. Preserve the user's \
+approved/not_approved/rejected/cancelled state; only approved proceeds. These are host-observed bindings. \
+For an unexecuted draft, include its current replaces_plan_digest. The runtime retains source approval, \
+independently reviews the translation and enters BUILD. Repairing translation preserves that approval. \
+Ask only about new material choices. Relay actual user messages and approval evidence. SHIP is separate.
 
 For PLAN alone, start with request and plan_only:true. Confirmation saves plan_ready without \
 implementation or GitHub authentication. Default plan_only:false continues from confirmed PLAN to BUILD. \
@@ -79,22 +75,22 @@ line in user_input/confirmation; never manufacture them from a question UI respo
 Only when the user explicitly requests execution without planning, send build instead of request. \
 Its user_instruction must be that user's exact authorization; specify the objective, new codex/ \
 branch, remote base branch, scoped units with observable acceptance and test commands, and full_suite. \
-Direct BUILD assigns authorship to this Astra parent and uses separate Astra Critic/Auditor children, \
-requiring two child slots. It records direct BUILD authority without claiming planning reviews or a CONFIRM PLAN message. \
+Direct BUILD selects a qualified worker or parent from the task assessment and catalog, with independent \
+Critic/Auditor lanes secured before authorship. It records the explicit BUILD instruction. \
 Requests without an already-approved Codex plan still use the planning and confirmation flow. Never infer direct BUILD permission. \
-Every BUILD publishes a draft before independent Astra attack and defense. Confirmed findings go to \
+Every BUILD publishes a draft before independent attack and defense. Confirmed findings go to \
 parent repair; both teams review the changed commit. Use recheck_pr:true alone to revalidate this \
 run's existing draft after a runtime upgrade; it preserves the contract and retry budget.
 
-Use Astra as the parent coordinator. Include the same host_session_id in every hwahap_step call: \
-the current parent task ID, or one UUID created once for this parent if the host exposes no ID. \
-Never copy another task's identity. In this repository the pool retains at most three children \
-across units and runs for this parent: Luna worker, Astra critic, Astra auditor. Authors never become reviewers. \
-Inspect native spawn, follow-up, wait and interrupt capabilities before execution; do not probe \
-capacity with disposable children or silently substitute models.
+Use a qualified parent coordinator and the same host_session_id for the run. Supply host_observation \
+from actual host metadata: parent model/effort, available models/efforts/tools, free slots, observation \
+time and source. Refresh when requested; the maximum age is 300 seconds. The run pins its catalog \
+revision and model/effort/role assignments. Catalog replacement applies to new runs; an unavailable \
+bound model pauses its existing run for recovery. Worker, Critic and Auditor retain distinct identities. \
+Use the host's native spawn, follow-up, wait and interrupt capabilities.
 
 For `native_dispatch`, follow the exact lane and identity. If lane=coordinator, register \
-agent_id=coordinator and execute the brief in this Astra parent (planning, implementation or repair). Never spawn \
+agent_id=coordinator and execute the brief in this qualified parent (planning, implementation or repair). Never spawn \
 a fourth child for that lane. If reuse_agent_id is present, FIRST register that exact agent ID, \
 then send the exact brief with the native follow-up tool ONCE. Registration is durable before \
 follow-up so a lost response cannot trigger duplicate delivery. If reuse_agent_id is absent, \
@@ -112,6 +108,9 @@ runtime requests two independent preflight reviews and executes both checks befo
 Copy native_dispatch.decision.digest into decision_digest for both registration and completion. \
 Keep the offered identity, model, effort and lane throughout that dispatch.
 
+Registered progress omits brief text and returns native_brief with the immutable request artifact and \
+prompt digest. Retain the first offered brief, or read .hwahap/artifacts/<artifact> in the run repository. \
+The handoff deadline bounds registration; execution gets its own deadline after registration. \
 For `native_wait`, coordinator means perform the assigned work here, not wait for a child. \
 Otherwise use event-driven native waits of at most 30 seconds and check hwahap_step after a wait \
 expires; never sleep for 360 seconds or hold one blocking wait through the deadline. When the \
@@ -234,6 +233,13 @@ pub struct ShipArgs {
     pub confirmation: String,
 }
 
+#[derive(Debug, Clone, Serialize, JsonSchema)]
+pub struct NativeBriefReference {
+    /// Immutable request under the current run's .hwahap/artifacts directory.
+    pub artifact: String,
+    pub prompt_digest: String,
+}
+
 /// What every tool returns.
 #[derive(Debug, Clone, Serialize, JsonSchema)]
 pub struct RunReport {
@@ -256,7 +262,10 @@ pub struct RunReport {
     /// The draft pull request, once there is one.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub pr_url: Option<String>,
-    /// The exact native request, present while dispatching, waiting or stopping a child.
+    /// Full brief on first offer; registered progress carries metadata and native_brief.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub native_brief: Option<NativeBriefReference>,
+    /// Current native dispatch metadata.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub native_dispatch: Option<NativeDispatch>,
     /// All retained native requests, including incomplete work; unknown usage is explicit.
@@ -275,6 +284,7 @@ impl From<StepOutcome> for RunReport {
             plan_digest: outcome.plan_digest,
             pr_url: outcome.pr_url,
             native_dispatch: None,
+            native_brief: None,
             cost_evidence: None,
         }
     }
@@ -295,6 +305,15 @@ impl From<NativeProgress> for RunReport {
     fn from(progress: NativeProgress) -> Self {
         let mut report = RunReport::from(progress.outcome);
         report.native_dispatch = progress.dispatch;
+        if let Some(dispatch) = report.native_dispatch.as_mut() {
+            if dispatch.agent_id.is_some() {
+                report.native_brief = Some(NativeBriefReference {
+                    artifact: format!("native-request-{}.json", dispatch.dispatch_id),
+                    prompt_digest: dispatch.prompt_digest.clone(),
+                });
+                dispatch.brief.clear();
+            }
+        }
         report
     }
 }

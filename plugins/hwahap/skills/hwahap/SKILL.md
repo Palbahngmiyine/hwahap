@@ -5,14 +5,14 @@ description: "Plan code implementation through decision rounds, or build an expl
 
 # Hwahap
 
-Use Astra as parent. Follow the MCP server's `instructions` as the execution protocol.
+Use a qualified parent from the host inventory. Follow the MCP server's `instructions` as the execution protocol.
 Call `hwahap_step` with the repository path and the same stable `host_session_id` throughout.
 
 For a planning request, start `request` with `plan_only:true` and finish at `plan_ready`.
 After the user explicitly requests BUILD, pass the full stored plan digest to `build_confirmed`.
 An ordinary implementation `request` uses `plan_only:false` and continues after plan confirmation.
-For `PLEASE IMPLEMENT THIS PLAN:` with the full approved Codex plan, use `approved_plan`
-to bind the original approval to its executable translation. Preserve the existing implementation
+For an already approved Codex plan, use `approved_plan` with its original request and approval reference
+to bind the approval and plan digests to the executable translation. Preserve existing implementation
 approval while recovering a missing `plan.json` through that handoff.
 Keep source approval, exact draft replacement digest and independent translation reviews distinct.
 When the user explicitly skips planning, use `build` with their verbatim authorization.

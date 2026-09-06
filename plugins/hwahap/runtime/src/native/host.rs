@@ -632,17 +632,25 @@ fn progress(
             format!("Native {} dispatch {}", dispatch.role, dispatch.dispatch_id)
         };
         if !dispatch.stop_required && dispatch.failure.is_none() {
-            if let Some(elapsed) =
-                super::timing::elapsed_since_offer(&Store::open(root)?, &dispatch.dispatch_id)?
-            {
-                outcome.message.push_str(&format!(
-                    ". Host-observed elapsed: {elapsed} ms; target {}s, deadline {}s.",
-                    dispatch.soft_budget_secs, dispatch.hard_timeout_secs,
-                ));
-                if elapsed > dispatch.soft_budget_secs.saturating_mul(1000) {
-                    outcome.message.push_str(" Target exceeded: inspect progress and remaining scope; do not infer completion or start another agent.");
-                }
-            }
+            let store = Store::open(root)?;
+            let execution =
+                super::timing::elapsed_since_registration(&store, &dispatch.dispatch_id)?;
+            let elapsed = execution
+                .or(super::timing::elapsed_since_offer(
+                    &store,
+                    &dispatch.dispatch_id,
+                )?)
+                .unwrap_or(0)
+                / 1000;
+            let phase = if execution.is_some() {
+                "수행 중"
+            } else {
+                "연결 대기"
+            };
+            outcome.message = format!(
+                "{} {phase}: {elapsed}초 / {}초.",
+                dispatch.role, dispatch.hard_timeout_secs
+            );
         }
     } else if running {
         outcome.next = "native_wait".into();

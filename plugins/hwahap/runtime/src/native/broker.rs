@@ -22,6 +22,7 @@ pub struct NativeSessions {
     pub(super) max_calls: u64,
     pub(super) timeout_secs: u64,
     pub(super) waiting: Mutex<Option<Waiting>>,
+    pub(super) registered: tokio::sync::Notify,
     pub(super) host_session_id: Option<String>,
 }
 
@@ -32,6 +33,7 @@ impl NativeSessions {
             max_calls,
             timeout_secs,
             waiting: Mutex::new(None),
+            registered: tokio::sync::Notify::new(),
             host_session_id: None,
         }
     }
@@ -97,7 +99,9 @@ impl NativeSessions {
             &waiting.pending.dispatch,
             &registration.agent_id,
         )?;
-        timing::observe(&self.store, &waiting.pending.dispatch, None, None)
+        timing::observe(&self.store, &waiting.pending.dispatch, None, None)?;
+        self.registered.notify_one();
+        Ok(())
     }
 
     /// Durable recording precedes delivery. Identical retries do not deliver twice.

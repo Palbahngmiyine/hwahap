@@ -39,14 +39,18 @@ Acceptance·테스트·허용 경로 변경은 `user_input`으로 PLAN에서 결
 
 ## Codex에서 승인한 계획 넘기기
 
-사용자가 `PLEASE IMPLEMENT THIS PLAN:` 뒤에 전체 계획을 제출했다면 이미 받은 구현 승인을 보존한다.
+이미 받은 계획 승인은 구현 요청 원문과 계획 참조로 보존한다. 전체 본문을 포함한 기존 인계 형식도 지원한다.
 호스트는 `approved_plan`을 지원하는 도구 스키마를 확인하고 원문과 실행 계약을 전달한다.
-같은 승인 메시지를 일반 `request`·`user_input`으로 보내면 승인 계획 인계 경로를 안내한다.
+호스트는 기존 승인 출처와 상태를 확인해 `approved_plan`으로 전달한다.
 
 - `approval.implementation_request`: 사용자의 전체 실제 메시지 원문.
-- `approval.markdown`: 접두사 다음 전체 계획 본문. 바깥 공백만 제거한다.
+- `approval.markdown`: 승인한 전체 계획 본문. 바깥 공백만 제거한다.
 - `approval.markdown_digest`: 그 본문 UTF-8 바이트의 SHA-256, `sha256:<hex>` 형식.
 - `approval.source_head`: 변환에 사용한 현재 깨끗한 checkout의 정확한 commit.
+- `approval.reference`: 기존 승인 출처 `source_reference`, `disposition`, 계획 digest와 요청 원문 digest.
+  요청 상태는 `approved`·`not_approved`·`rejected`·`cancelled`로 구분하며 `approved`만 진행한다.
+  호스트는 전체 메시지의 승인 상태를 판별하고 작업 범위 제한을 원문에 함께 보존한다.
+  원문 요청 digest는 `implementation_request_digest`, 계획 digest는 `plan_digest`다.
 - `contract`: `BuildRequest` 형식의 실행 명세. 원문과 같은 `user_instruction`, 목표·기준 브랜치·
   새 `codex/` 브랜치·전체 테스트 명령·작업별 수용 기준·허용 경로·테스트를 빠짐없이 담는다.
 - `replaces_plan_digest`: 기존 미실행 초안이 있으면 현재 전체 digest, 없으면 `null`.
@@ -166,35 +170,30 @@ bin/hwahap usage show /absolute/repository
 `cost_estimate.priced_subtotal`은 지정한 가격표로 계산한 추정 소계다.
 토큰 관측값과 함께 단가 출처·유효일·가정을 보존한다.
 
-## 모델 배치 비교
+## 모델 카탈로그와 작업 평가
 
-기본 PLAN은 Luna 첫 구현, Astra 검토·재작업이다. 중간 난도 구현에 Terra를 평가하려면
-새 부모 pool에서 `.hwahap/config.toml`에 아래처럼 세 profile을 명시한다. 기존 pool은 설정을 유지한다.
-direct BUILD는 기존 계약대로 부모 Astra와 별도 Astra 검토자 둘을 사용한다.
+`.hwahap/model-catalog.json`에 카탈로그를 두거나 `.hwahap/config.toml`의 `catalog_path`로 지정한다.
+기본 파일이 없으면 [번들 정책](runtime/src/catalog.rs)을 사용한다. 모델 교체는 새 run부터 적용된다.
+기존 run은 snapshot과 작업자 모델·effort·역할을 유지하고, 해당 모델이 사라지면 복구를 기다린다.
 
-```toml
-[profiles.economy]
-model = "gpt-5.6-terra"
-effort = "medium"
-[profiles.critic]
-model = "gpt-6-astra"
-effort = "high"
-[profiles.deep]
-model = "gpt-6-astra"
-effort = "high"
-```
+| 입력 | 기록할 내용 |
+|---|---|
+| `Catalog` | schema `hwahap/catalog/v1`, revision, 모델별 역량·지원 effort/depth·선호 순서·출처, 모든 역할의 최소 요구 |
+| `host_observation` | 부모 ID·모델/effort, 실제 가용 모델/effort·도구·슬롯, 관찰 시각과 출처 |
+| `plan.task_profiles` | unit별 평가와 aggregate 작업의 `run` 평가 |
+| `task_assessment` | run·계약 digest·unit·role에 결속한 작업 평가 |
 
-동일한 요청·base commit·acceptance·테스트로 Luna와 Terra 실행을 비교한다. `evaluation`의
-run 상태·통과 unit 수·수정 시도·요청 profile, `latency`, 계측 범위와 토큰·추정 비용을 함께 본다.
-실패·중단을 포함한 성공 작업당 비용을 비교한다.
-대표 과제와 회귀 반례로 품질 기준을 고정한 뒤 같은 조건에서 측정한다.
+요구 역량은 `capabilities`, 추론 깊이는 `depth`(`routine/focused/deep`)에 기록한다.
+`risk`의 `failure_cost`, `reversibility`, `blast_radius`는 위험 수준 0/1/2다.
+각각 실패 비용, 되돌리기 어려움, 영향 범위를 뜻하며 2가 있으면 고위험이다.
+근거가 부족한 평가는 보완한 뒤 진행한다. 카탈로그 수치는 선택 정책이며 실제 품질은 실행 관측으로 비교한다.
 
-PR 공격·방어의 초기 brief에는 정확한 base/head와 변경 경로를 담는다.
-두 검토자는 해당 revision의 전체 diff와 필요한 주변 소스를 읽어 근거를 작성한다.
+`topology`는 predecessors, coupling, shared_resources, writer_owner, separable, write_paths를 담는다.
+공유 자원은 같은 변경 가능 자원의 ID로 기록한다. 작성 소유자는 unit ID, aggregate 작업은 run ID다.
+배정은 선행 조건 → 역량·깊이 합성 → 위험·공유 상태 → 가용 모델 → 검증 의무 순서다.
+고위험 작성은 적격 부모가 맡고 독립 검토자 둘이 승인한 격리 checkout에서 실패·복구 명령을 먼저 실행한다.
 
-공식 모델 설명은 [Astra](https://developers.openai.com/api/docs/models/gpt-6-astra),
-[Terra](https://developers.openai.com/api/docs/models/gpt-5.6-terra),
-[Luna](https://developers.openai.com/api/docs/models/gpt-5.6-luna)를 따른다.
-[App Server](https://learn.chatgpt.com/docs/app-server)는 `thread/tokenUsage/updated`를 제공한다.
-호스트는 직접 수신한 이벤트의 counters를 전달할 수 있다. 수집·비교 방향은
-[Uber의 측정·문맥 비용·작업별 평가](https://www.uber.com/us/en/blog/efficient-software-factory/)를 참고했다.
+등록·완료에는 요청의 `decision.digest`를 `decision_digest`로 함께 전달한다.
+최초 응답의 전체 brief를 보관하고, 이후 `native_brief.artifact`는 현재 run의 `.hwahap/artifacts`에서 읽는다.
+같은 성공 기준·base commit·테스트로 후보 모델을 비교하고 실패·복구를 포함한 관측값을 기록한다.
+토큰·비용 누락은 `unknown`, 단가표 계산은 추정값으로 표시한다.

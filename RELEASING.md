@@ -8,17 +8,17 @@
 기본 `GITHUB_TOKEN`을 사용하고 게시 job에 `contents: write` 권한을 부여한다.
 
 ```sh
-python3 scripts/set-version.py 0.1.0
+python3 scripts/set-version.py 0.1.1
 python3 tests/versions.py
 cargo test --locked --manifest-path plugins/hwahap/runtime/Cargo.toml --all-targets
 git add plugins/hwahap/version.txt plugins/hwahap/.codex-plugin/plugin.json plugins/hwahap/runtime/Cargo.toml plugins/hwahap/runtime/Cargo.lock README.md plugins/hwahap/README.md
-git commit -m 'chore: release 0.1.0'
-git tag v0.1.0
-git push origin main v0.1.0
+git commit -m 'chore: release 0.1.1'
+git tag v0.1.1
+git push origin main v0.1.1
 ```
 
 다음 버전에는 위 명령의 버전을 바꾼다. `fix`는 patch, `feat`는 minor,
-호환되지 않는 공개 인터페이스 변경은 major 증가를 검토한다. 내부 `hwahap/v4` 기록 형식은
+호환되지 않는 공개 인터페이스 변경은 major 증가를 검토한다. 내부 `hwahap/v5` 기록 형식은
 패키지 버전과 별개이며, 배포 버전은 태그로 지정한다.
 게시 실패 시 Actions에서 실패한 job을 재실행한다. Release의 수동 실행은 지정한 ref를
 빌드·검증하고 Actions artifact를 만든다.
@@ -30,8 +30,8 @@ git push origin main v0.1.0
 같은 이름의 `.sha256` 파일을 같은 디렉터리에 내려받는다. macOS Apple Silicon 예시:
 
 ```sh
-shasum -a 256 -c hwahap-v0.1.0-aarch64-apple-darwin.tar.gz.sha256
-tar -xzf hwahap-v0.1.0-aarch64-apple-darwin.tar.gz
+shasum -a 256 -c hwahap-v0.1.1-aarch64-apple-darwin.tar.gz.sha256
+tar -xzf hwahap-v0.1.1-aarch64-apple-darwin.tar.gz
 codex plugin marketplace add ./hwahap
 codex plugin add hwahap@hwahap
 ```
@@ -54,3 +54,18 @@ codex plugin add hwahap@hwahap
 Rust 1.90 이상이 필요하다. 개발 중에는 실제 Codex 설치 검증을
 `python3 tests/plugin-install.py plugins/hwahap/runtime/target/release/hwahap`으로 실행한다.
 이 테스트는 임시 Codex 홈에서 설치와 연결을 확인한다.
+패키지는 `tests/package.sh RUST_TARGET [SNAPSHOT_REF]`로 검증한다. 기본값은 `HEAD`이며,
+작성 중인 후보는 체크포인트 ref를 지정해 소스·문서·바이너리 버전을 함께 검증한다.
+
+## 0.1.1 업그레이드
+
+0.1.1의 실행 기록은 `hwahap/v5`이며 0.1.0은 `hwahap/v4`를 사용한다.
+
+1. 진행 중인 v4 작업은 기존 0.1.0 plugin·바이너리로 완료한다.
+2. 보존할 작업은 관련 에이전트·명령의 종료를 확인하고 checkout과 `.hwahap` 전체를 함께 보관한다.
+3. 별도 checkout에서 0.1.1 plugin을 설치하고 새 작업·run을 시작한다.
+4. 필요한 사용자 승인·계획은 원문과 출처를 `approved_plan`으로 전달해 독립 변환 검토를 받는다.
+
+기존 기록은 원래 schema와 실행 버전으로 보존한다. 새 런타임은 v4를 만나면 버전 안내를 반환한다.
+카탈로그는 새 run에서 고정되며 진행 중 run의 모델·effort·역할 배정을 유지한다.
+[변경 기록](plugins/hwahap/CHANGELOG.md)과 [사용성 검증](docs/plans/usability-0.1.1.md)을 참고한다.

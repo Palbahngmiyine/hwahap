@@ -5,8 +5,8 @@ Codex 스킬과 local STDIO MCP 서버다. BUILD는 구현·검증·draft PR 검
 ADJUST에서 계약 변경은 PLAN으로, 계약 내 구현 수정은 BUILD로 돌아간다. Rust 실행기는 계획·검증·복구를 담당하고,
 호스트 Codex가 기본 하위 에이전트를 실행한다. 진행 상태와 실행 요청은 `.hwahap/`에 저장한다.
 
-실행 계약은 `hwahap/v4` 형식을 사용한다. 이전 설치와 hook을 정리한 뒤 현재 스킬과 release를 함께 설치한다.
-보존할 대화·결정·검증 기록은 활성 `.hwahap` 저장소 밖의 이력으로 둔다.
+실행 계약은 `hwahap/v5` 형식을 사용한다. v4 실행은 0.1.0으로 완료하거나 원본 디렉터리를 보존한다.
+새 checkout에서 0.1.1 실행을 시작하는 절차는 [업그레이드](../../RELEASING.md#011-업그레이드)를 따른다.
 
 ## 1. 한눈에 보기
 
@@ -16,7 +16,7 @@ ADJUST에서 계약 변경은 PLAN으로, 계약 내 구현 수정은 BUILD로 �
 | PLAN FREEZE | Rust validator + Deep Auditor + Critic | ID 연결·의존관계·필수 필드 검사, 작성자와 독립된 계약 검토 | `CONFIRM PLAN <challenge>` 정확히 입력 |
 | PLAN READY | Rust 실행기 | `plan_only:true`인 계획을 확정하고 대기 | 원할 때 확정 계획의 BUILD를 명시적으로 요청 |
 | CODING | Economy(첫 구현) + Deep(재작업) + Critic(리뷰) | unit을 순서대로 구현·검증·리뷰하고 통과한 변경을 commit | 승인 범위 충돌 시 결정 |
-| DRAFT PR / PR REVIEW | Astra Critic + 별도 Astra Auditor | full suite 후 draft 게시, 공격 보고서·방어 판정, 확인된 결함 수정 후 새 head 재검토 | 결과 확인 |
+| DRAFT PR / PR REVIEW | Critic + 별도 Auditor | full suite 후 draft 게시, 공격 보고서·방어 판정, 확인된 결함 수정 후 새 head 재검토 | 결과 확인 |
 | ADJUST / SHIP | — | 계약 변경은 PLAN 재확인, 계약 내 수정은 BUILD 재검증, 완료된 draft는 ready로 | 변경 의도 전달 또는 `SHIP <challenge>` 정확히 입력 |
 
 `request`와 `plan_only:true`로 시작하면 `CONFIRM PLAN` 이후 `plan_ready`에서 끝난다. 구현은 이후 사용자의
@@ -61,14 +61,15 @@ hwahap/
 | 모듈 | 책임 |
 |---|---|
 | `canonical` | canonical JSON과 digest. challenge가 나오는 유일한 곳 |
-| `plan` | `hwahap/v4` 계약 타입. 답변 신선도 규칙 |
+| `plan` | `hwahap/v5` 계약 타입. 답변 신선도 규칙 |
 | `answer` | 원문 사용자 메시지와 정확한 확인 문장의 문법 |
 | `dialogue` | 계획에 결속된 질문 배치와 구조화 응답 검사 |
 | `frontier` | 지금 물을 수 있는 질문 |
 | `validate` | freeze 게이트와 unit 위상 정렬 |
 | `render` | 결정적 `plan.md` |
 | `state` | `run.json` 원자적 스냅샷 + `events.jsonl` hash chain |
-| `profile` | 고정 profile 3개와 지원 effort 타입 |
+| `profile`·`catalog` | 역할 분류, 교체 가능한 역량·effort 카탈로그와 run 스냅샷 |
+| `delegation` | 작업 평가, 배정 판정, 독립 검토·복구 검증 의무 |
 | `native` | 요청 저장, 호스트 전달, agent 등록·완료·중단 확인, 실행 잠금 |
 | `session` | 실행 결과와 증거 출처를 구분하는 타입 |
 | `cost` | 요청·완료·미보고 사용량과 모델별 보고 토큰 집계 |
@@ -83,7 +84,7 @@ hwahap/
 **Rust 상태 기계가 실행을 조정한다.** MCP는 `hwahap_step`, `hwahap_status`, `hwahap_ship`을 제공한다.
 도구 간 실행 절차는 MCP `instructions`에 정의한다.
 
-**추천은 사용자가 선택한다.** 질문에 대안의 내용과 추천 근거를 표시한다.
+**추천은 사용자가 선택한다.** 질문은 한 문장, 선택지는 결과별 label로 표시한다. 상세 추천 근거는 계획 문서에 둔다.
 사용자가 제출한 응답을 현재 계획·질문 ID·정확한 label에 결속한다.
 다른 원문은 `Clarify`로 보존하고 해석을 다시 묻는다.
 
@@ -108,36 +109,36 @@ hwahap/
 
 ## 5. 모델·effort 정책
 
-| Profile | 모델 | Effort | 담당 |
-|---|---|---|---|
-| Economy | `gpt-5.6-luna` | `medium` | Worker: 사실 조사, 첫 구현 |
-| Critic | `gpt-6-astra` | `high` | Critic: plan·unit 리뷰, PR 공격 |
-| Deep | `gpt-6-astra` | `high` | 부모: 추천·합성·재계획·재작업; 별도 Auditor: ColdConsumer·PR 방어 |
+`catalog`는 모델 ID·역량·지원 effort와 depth·선호 순서·근거를 제공한다.
+run 생성 시 revision과 digest를 고정하며 교체한 카탈로그는 새 run부터 적용한다.
+호스트 관찰은 부모·가용 모델/effort·도구·슬롯·출처·시각을 기록하고 300초 이내 값을 사용한다.
 
-PLAN을 거쳐 BUILD를 시작하면 Luna가 첫 구현을 맡고, direct BUILD는 부모 Astra가 첫 구현도 맡는다.
-실패하면 부모 Astra가 한 번 재작업하고, 다시 실패하면 근거와 함께 중단한다.
-부모는 Astra이며 추천·plan 합성·PlanConflict replan·재작업을 직접 처리한다.
-Worker·Critic·Auditor 세 자식은 같은 저장소와 같은 `host_session_id` 안에서 unit과 run을 넘어 유지한다.
-ColdConsumer는 작성자와 독립된 계약 검토자이며 재사용된 Auditor는 과거 검토 문맥을 유지한다.
-pool은 작업자 ID·역할·모델·effort를 고정한다. direct BUILD는 Critic·Auditor 두 자식을 사용한다.
-최초 슬롯은 일반 경로 세 개, direct BUILD 두 개이며 저장소·부모별로 pool을 구분한다.
+| 조건 | 작성 배정 | 검증 |
+|---|---|---|
+| 독립적이고 요구 역량을 충족 | Worker | Critic·Auditor 확보 |
+| 공유 변경 상태 또는 고위험 | 적격 부모 | 독립 검토와 격리 복구 검증 |
+| 기존 Worker의 역량 부족 | 적격 부모, 없으면 대기 | 기존 identity 유지 |
+| 모델·effort·슬롯 부족 | 대기 | 호스트 관찰 갱신 후 재평가 |
 
-`.hwahap/config.toml`의 `[profiles.*]`에서 model과 effort를 함께 지정할 수 있지만 이미 유지 중인 pool과 다르면 실행을 거부한다.
-부모가 처리하는 Deep 역할과 두 검토자는 `gpt-6-astra`를 요구하며 다른 모델 설정은 dispatch 전에 거부한다.
-direct BUILD는 Economy 역할도 부모 Astra로 고정한다. `build-request.json`에 BUILD를 시작한 부모를 즉시 결속하고, `native-owner.json`으로 소유권을 유지한다.
-`[limits]`의 기본값은 `native_max_calls=64`, `native_timeout_secs=180`이다. 요청 한도에는
-재시도와 follow-up도 포함된다. soft 목표는 역할별 60/90/120초이며 native 요청의 hard 제한은 180초다.
-시간 초과 뒤에는 해당 dispatch의 종료를 확인한다. 분류와 관측 기록은 [PLATFORM](PLATFORM.md#2-저장과-중단-복구)을 따른다.
+역할과 작업의 역량은 항목별 최댓값, reasoning depth는 더 깊은 수준을 적용한다.
+실패 비용·복구 가능성·영향 범위는 각각 0/1/2로 평가하며 2가 있으면 고위험이다.
+배정 결과는 평가·카탈로그·관찰 digest와 역할·모델·effort에 결속한다.
+Worker·Critic·Auditor는 run과 부모별로 identity를 유지하며 검토자는 독립성을 유지한다.
+설정은 `.hwahap/model-catalog.json` 또는 `config.toml`의 `catalog_path`를 사용한다.
+기존 `[profiles.*]`는 카탈로그 형식으로 변환한 뒤 새 실행에 적용한다.
 
-이 요청 예산은 호스트의 열린 thread 한도와 다르다. 생성 거절은 `native_paused`로 기록하고,
-새 회복 근거가 있을 때 기존 run을 재개한다. [운영 절차](OPERATIONS.md#6-중단-상태별-대응)를 따른다.
+기본 요청 예산은 64회다. 연결 대기는 최대 180초이며, 등록 후 수행 시간은 별도로 180초다.
+`native_max_calls`·`native_timeout_secs`로 조정하고 재시도·follow-up도 요청 수에 포함한다.
+등록 후 상태 응답에는 배정 정보와 원문 artifact 참조를 담는다.
+중단 확인 뒤 후보 백업을 이용해 복구하며 실패로 소비한 시도 횟수를 유지한다.
+[운영 절차](OPERATIONS.md#6-중단-상태별-대응)와 [설정](USAGE.md#모델-카탈로그와-작업-평가)을 따른다.
 
 총비용 개선은 불필요한 계획용 하위 에이전트 생성과 반복 실패를 줄이는 방향이다. 상태·보고서에는
 요청·완료·중단·미완료·생성 실패·복구 수, requested model별 보고 토큰과 보고 비율을 남긴다. 호스트 처리와 하위
 에이전트의 사용량 보고 비율은 구분한다. 명시적으로 등록한 부모·자식 세션의 누적 카운터 차이를 `.hwahap/usage.json`에 저장한다.
 등록 전 작업과 수집 실패는 누락으로 표시한다. 세션 합계와 dispatch 합계는 각각 표시한다.
 선택한 단가표로 추정 비용을 계산할 수 있다. 실제 청구액과 모델별 절감 효과는 별도 검증이 필요하다.
-명령, 단가표와 Terra Economy 설정은 [사용량 계측](USAGE.md)을 따른다.
+명령, 단가표와 모델 비교은 [사용량 계측](USAGE.md)을 따른다.
 
 PR 공격·방어 결과는 PR URL·head SHA·계약 digest에 결속한다. 방어자는 공격 항목마다
 `confirmed/refuted/unresolved`와 근거를 제출한다. 미해결은 중단하고, 확인된 결함은 부모가 수정해

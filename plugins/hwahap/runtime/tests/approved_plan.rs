@@ -16,6 +16,7 @@ fn request(f: &Fixture) -> ApprovedPlanRequest {
     let instruction = format!("PLEASE IMPLEMENT THIS PLAN:\n{markdown}");
     ApprovedPlanRequest {
         approval: PlanApproval {
+            reference: None,
             markdown: markdown.into(),
             markdown_digest: Digest::of_bytes(markdown.as_bytes()).to_string(),
             implementation_request: instruction.clone(),

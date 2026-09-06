@@ -86,7 +86,7 @@ impl NativeSessions {
             hard_timeout_secs,
         };
         dispatch.reuse_agent_id = crate::native::pool::reusable(&self.store, &dispatch)?;
-        let (sender, receiver) = oneshot::channel();
+        let (sender, mut receiver) = oneshot::channel();
         {
             let mut guard = self.waiting.lock().map_err(super::poisoned)?;
             self.next_call()?;
@@ -113,16 +113,47 @@ impl NativeSessions {
                 sender: Some(sender),
             });
         }
-        let completion = match tokio::time::timeout(
-            Duration::from_secs(self.timeout_secs),
-            receiver,
-        )
-        .await
-        {
+        let registration = async {
+            loop {
+                let notified = self.registered.notified();
+                let ready = {
+                    let guard = self.waiting.lock().map_err(super::poisoned)?;
+                    guard.as_ref().is_some_and(|w| {
+                        w.pending.dispatch.dispatch_id == dispatch_id
+                            && w.pending.dispatch.agent_id.is_some()
+                    })
+                };
+                if ready {
+                    return Ok::<(), Error>(());
+                }
+                notified.await;
+            }
+        };
+        let handoff = tokio::time::timeout(Duration::from_secs(self.timeout_secs), async {
+            tokio::select! {
+                completion = &mut receiver => Ok(Some(completion)),
+                registration = registration => registration.map(|()| None),
+            }
+        })
+        .await;
+        let (received, phase) = match handoff {
+            Ok(Ok(Some(completion))) => (Ok(completion), "execution"),
+            Ok(Ok(None)) => (
+                tokio::time::timeout(Duration::from_secs(self.timeout_secs), receiver).await,
+                "execution",
+            ),
+            Ok(Err(error)) => return Err(error),
+            Err(error) => (Err(error), "handoff"),
+        };
+        let completion = match received {
             Ok(Ok(completion)) => completion,
             result => {
                 let outcome = if result.is_err() {
-                    "deadline"
+                    if phase == "handoff" {
+                        "handoff_deadline"
+                    } else {
+                        "deadline"
+                    }
                 } else {
                     "channel_closed"
                 };
@@ -132,7 +163,7 @@ impl NativeSessions {
                 } else {
                     "continuation channel closed"
                 };
-                return Err(Error::Rejected(format!("native {reason}; stop the child and its commands before acknowledging recovery")));
+                return Err(Error::Rejected(format!("native {phase} {reason}; stop the child and its commands before acknowledging recovery")));
             }
         };
         let final_message = crate::native::reply::result(&completion)?;

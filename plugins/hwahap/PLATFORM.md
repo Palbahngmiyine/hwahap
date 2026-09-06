@@ -1,6 +1,6 @@
 # Native 실행과 검증 기록
 
-2026-09-05의 소스·자동 테스트·호스트 실행 기록을 정리한다. 기록마다 실행 버전과 관측 출처를 표시한다.
+소스·자동 테스트·호스트 실행 기록을 정리한다. 기록마다 실행 버전과 관측 출처를 표시한다.
 
 ## 1. Codex 기본 하위 에이전트
 
@@ -13,17 +13,11 @@ Hwahap은 호스트에 노출된 native 도구로 모델 세션을 실행한다.
 절대 작업 경로와 접근 범위는 지시에 담으며, 검토 전후 Git 상태를 검사한다.
 요청 모델·effort는 실행 요청 기록에서, 호스트의 권한 정책은 호스트 설정에서 확인한다.
 
-[profile.rs](runtime/src/profile.rs)는 Deep을 `gpt-6-astra` / `high`, Economy를 Luna / `medium`,
-Critic을 Astra / `high`로 정의한다. 부모 Astra는 추천·합성·충돌 재계획·재작업을 맡는다.
-Worker Luna, Critic Astra, Auditor Astra는 같은 저장소·부모 `host_session_id`의 pool에 유지된다.
-Auditor는 독립 계약 검토와 최종 리뷰를 맡고 이전 검토 문맥을 유지한다.
-direct BUILD는 부모 Astra가 구현하며 Critic·Auditor 두 자식을 사용한다.
-
-[공식 설정 문서](https://learn.chatgpt.com/docs/config-file/config-reference)의
-`agents.max_concurrent_threads_per_session`은 부모를 제외한 동시에 열린 하위 에이전트의 한도다.
-기본값은 Codex가 정하며 이전 이름은 `agents.max_threads`다.
-일반 PLAN은 최초 슬롯 세 개, direct BUILD는 두 개를 사용한다.
-pool은 작업자 ID·역할·모델·effort를 고정한다. 상세 구현은 [pool.rs](runtime/src/native/pool.rs)에 있다.
+0.1.1은 [catalog](runtime/src/catalog.rs)의 역량·effort 정책과 현재 호스트 관찰로 모델을 선택한다.
+TaskAssessment는 작업 의존관계, 공유 상태, 추론 깊이와 세 위험 값을 추가한다.
+Worker·Critic·Auditor는 run과 부모별로 identity·역할·모델·effort를 유지한다.
+작성 전 독립 검토자 두 명의 모델·effort·슬롯을 확인한다. 부모 작성은 검토자 두 슬롯,
+새 Worker 작성은 Worker와 두 검토자 슬롯을 확보한다. 기존 작업자는 재사용한다.
 
 ## 2. 저장과 중단 복구
 
@@ -42,17 +36,17 @@ pool은 작업자 ID·역할·모델·effort를 고정한다. 상세 구현은 [
 | `native-failure-<id>.json` | spawn 실패와 생성 여부의 호스트 관찰 |
 | `native-resume-<id>.json` | 재개에 사용한 새 호스트 회복 관찰 |
 | `native-timing-<id>.json` | 시각·역할·예산·입출력 bytes·최초 종료 사유 |
-| `.hwahap/native-pool-<scope digest>.json` | run archive 이후에도 유지하는 부모별 작업자 정보 |
+| `.hwahap/native-pool-<scope digest>.json` | run·부모별 작업자 정보 |
 | `receipt-<sequence>-<role>.json` | 증거 출처를 표시한 세션 결과 |
 
 호스트는 생성 직후 agent ID를 등록한다. 완료는 등록된 ID에 결속하고 동일 완료는 한 번 소비한다.
 생성과 등록 사이에 연결이 끊기면 해당 요청의 에이전트와 명령을 찾아 종료를 확인한다.
 `all_work_stopped=true`는 모든 관련 작업의 종료를 확인한 뒤 전달한다.
 
-기본 한도는 run당 요청 64회, 요청당 hard timeout 180초다. 재시도·follow-up도 요청 수에 포함한다.
+기본 한도는 run당 요청 64회, 연결 제한 180초와 등록 후 수행 제한 180초다. 재시도·follow-up도 요청 수에 포함한다.
 역할별 soft 목표는 60/90/120초이며 hard 값으로 상한을 둔다. 호스트는 최대 30초 이벤트 대기를 사용한다.
-종료 사유는 `completed`·`deadline`·`channel_closed`·`spawn_failed`·`spawn_unknown`·`stopped`이며 최초 값을 보존한다.
-관측 시간에는 호스트 queue·spawn·relay가 포함된다.
+종료 사유는 `completed`·`handoff_deadline`·`deadline`·`channel_closed`·`spawn_failed`·`spawn_unknown`·`stopped`이며 최초 값을 보존한다.
+연결 대기와 등록 후 수행 시간을 각각 관측한다.
 
 생성된 자식이 없는 spawn 실패는 `native_paused`에 저장하고 새 호스트 회복 관찰을 기다린다.
 재개 관찰은 해당 재시도에 한 번 사용하며 새 요청을 실행 예산에 포함한다.

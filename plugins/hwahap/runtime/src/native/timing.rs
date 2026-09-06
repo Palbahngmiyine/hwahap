@@ -151,6 +151,12 @@ pub fn elapsed_since_offer(store: &Store, id: &str) -> Result<Option<u64>> {
         .and_then(|v| elapsed_at(v.offered_at_ms, chrono::Utc::now().timestamp_millis())))
 }
 
+pub fn elapsed_since_registration(store: &Store, id: &str) -> Result<Option<u64>> {
+    Ok(read(store, id)?
+        .and_then(|v| v.registered_at_ms)
+        .and_then(|start| elapsed_at(start, chrono::Utc::now().timestamp_millis())))
+}
+
 fn elapsed_at(offered: i64, now: i64) -> Option<u64> {
     now.checked_sub(offered)
         .and_then(|ms| u64::try_from(ms).ok())

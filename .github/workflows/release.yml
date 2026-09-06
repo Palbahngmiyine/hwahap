@@ -78,6 +78,10 @@ jobs:
     permissions:
       contents: write
     steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.ref_name }}
+          persist-credentials: false
       - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
           path: dist
@@ -88,6 +92,16 @@ jobs:
           GH_REPO: ${{ github.repository }}
           RELEASE_TAG: ${{ inputs.ref || github.ref_name }}
         run: |
+          python3 - <<'PY' > release-notes.md
+          import os
+          from pathlib import Path
+          version = os.environ["RELEASE_TAG"].removeprefix("v")
+          text = Path("plugins/hwahap/CHANGELOG.md").read_text()
+          marker = f"## {version}\n"
+          if marker not in text:
+              raise SystemExit(f"Missing release notes for {version}")
+          print(text.split(marker, 1)[1].split("\n## ", 1)[0].strip())
+          PY
           if gh release view "$RELEASE_TAG" --json isDraft --jq .isDraft > release-draft.txt; then
             if [ "$(cat release-draft.txt)" != true ]; then
               echo "Release $RELEASE_TAG is already published; keeping assets immutable."
@@ -95,6 +109,6 @@ jobs:
             fi
             gh release upload "$RELEASE_TAG" dist/* --clobber
           else
-            gh release create "$RELEASE_TAG" dist/* --verify-tag --generate-notes --draft --title "Hwahap $RELEASE_TAG"
+            gh release create "$RELEASE_TAG" dist/* --verify-tag --notes-file release-notes.md --draft --title "Hwahap $RELEASE_TAG"
           fi
-          gh release edit "$RELEASE_TAG" --draft=false
+          gh release edit "$RELEASE_TAG" --notes-file release-notes.md --draft=false

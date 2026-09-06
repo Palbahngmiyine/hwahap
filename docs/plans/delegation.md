@@ -115,7 +115,7 @@
 - 참고 작업 「개발 작업 단위 분해 조사」(`6a9d6c17-883c-83e8-814e-1736c7f6019f`)의 최종 제안 T01–T17을 각 테스트 파일의 시나리오 ID와 연결한다.
 - 일반 PLAN·direct BUILD·approved-plan 가져오기에서 공통 validator, ADJUST·재검증·PR repair·SHIP에서 현재 증거 소비를 확인한다.
 - 임의 모델 ID와 서로 다른 effort 이름의 fixture로 카탈로그 교체를 검증한다. 등록·재사용·중단·복구의 실제 native dispatch 필드를 확인한다.
-- 패키지 목표 버전은 `0.2.0`, 저장 schema는 `hwahap/v5`다. 버전 스크립트·manifest·게이트·CI·README·운영 문서를 일치시킨다.
+- 패키지 목표 버전은 `0.1.1`, 저장 schema는 `hwahap/v5`다. 버전 스크립트·manifest·게이트·CI·README·운영 문서를 일치시킨다.
 - UI는 한 문장 질문, 짧은 선택 결과, 별도 상세 근거를 유지한다. 실패 시 사용자가 취할 다음 행동을 한 문장으로 표시한다.
 - 구현 범위는 순차 실행·단일 writer·독립 검토·MCP 3개·로컬 STDIO다. 병렬 스케줄러, 증분 테스트 캐시, 자동 probe는 후속 과제로 둔다.
 - 검증: `delegation_flow`, 전체 Cargo 테스트, Clippy, fmt, `python3 tests/versions.py`, `bash tests/gates.sh`.
