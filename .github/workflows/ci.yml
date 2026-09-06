@@ -2,6 +2,8 @@ name: Hwahap
 
 on:
   pull_request:
+  push:
+    branches: [main]
   workflow_call:
     inputs:
       ref:
@@ -62,6 +64,10 @@ jobs:
 
       - name: Test
         run: cargo test --locked --manifest-path plugins/hwahap/runtime/Cargo.toml --all-targets
+
+      - name: Verify runtime download recovery
+        if: runner.os != 'Windows'
+        run: tests/download.sh
 
       - name: Reject generated repository changes
         run: test -z "$(git status --porcelain --untracked-files=all)"

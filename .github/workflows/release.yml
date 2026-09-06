@@ -2,87 +2,87 @@ name: Release
 
 on:
   push:
-    branches: [main]
+    tags: ['v*']
   workflow_dispatch:
+    inputs:
+      tag:
+        description: Existing version tag to publish or retry
+        required: true
+        type: string
 
 permissions:
   contents: read
 
 concurrency:
-  group: release-main
+  group: release-${{ inputs.tag || github.ref_name }}
   cancel-in-progress: false
 
 jobs:
   ci:
     uses: ./.github/workflows/ci.yml
-
-  release:
-    needs: ci
-    runs-on: ubuntu-latest
-    permissions:
-      contents: write
-      issues: write
-      pull-requests: write
-    outputs:
-      created: ${{ steps.release.outputs.release_created }}
-      tag: ${{ steps.release.outputs.tag_name }}
-      pr: ${{ steps.release.outputs.pr }}
-    steps:
-      - name: Require this tested commit to still be main
-        env:
-          GH_TOKEN: ${{ github.token }}
-          REPOSITORY: ${{ github.repository }}
-          TESTED_SHA: ${{ github.sha }}
-        run: test "$(gh api "repos/$REPOSITORY/commits/main" --jq .sha)" = "$TESTED_SHA"
-      - uses: googleapis/release-please-action@5c625bfb5d1ff62eadeeb3772007f7f66fdcf071 # v4.4.1
-        id: release
-        with:
-          config-file: release-please-config.json
-          manifest-file: .release-please-manifest.json
-
-  # GITHUB_TOKEN-created PRs do not trigger pull_request workflows.
-  # Validate the release branch explicitly in this same workflow instead.
-  release-pr-ci:
-    needs: release
-    if: needs.release.outputs.pr != ''
-    uses: ./.github/workflows/ci.yml
     with:
-      ref: ${{ fromJSON(needs.release.outputs.pr).headBranchName }}
+      ref: ${{ inputs.tag || github.ref_name }}
 
   packages:
-    needs: release
-    if: needs.release.outputs.created == 'true'
+    needs: ci
     strategy:
       fail-fast: false
       matrix:
         include:
           - os: ubuntu-24.04
             target: x86_64-unknown-linux-gnu
-          - os: macos-latest
+          - os: macos-15
             target: aarch64-apple-darwin
+          - os: macos-15-intel
+            target: x86_64-apple-darwin
     runs-on: ${{ matrix.os }}
     timeout-minutes: 30
-    permissions:
-      contents: write
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          ref: ${{ needs.release.outputs.tag }}
+          ref: ${{ inputs.tag || github.ref_name }}
           persist-credentials: false
-      - name: Build and smoke-test the installable package
+      - name: Build and smoke-test the versioned plugin package
         env:
           TARGET: ${{ matrix.target }}
-          RELEASE_TAG: ${{ needs.release.outputs.tag }}
+          RELEASE_TAG: ${{ inputs.tag || github.ref_name }}
         run: |
+          test "$RELEASE_TAG" = "v$(cat plugins/hwahap/version.txt)"
+          git show-ref --verify "refs/tags/$RELEASE_TAG"
           rustup toolchain install stable --profile minimal
           rustup default stable
           rustup target add "$TARGET"
-          test "$RELEASE_TAG" = "v$(cat version.txt)"
-          cargo build --locked --release --manifest-path runtime/Cargo.toml --target "$TARGET"
+          cargo build --locked --release --manifest-path plugins/hwahap/runtime/Cargo.toml --target "$TARGET"
           tests/package.sh "$TARGET"
-      - name: Upload package and checksum to the release
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: ${{ matrix.target }}
+          path: dist/*
+          if-no-files-found: error
+
+  publish:
+    needs: packages
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          path: dist
+          merge-multiple: true
+      - name: Publish only after every platform has passed
         env:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
-          RELEASE_TAG: ${{ needs.release.outputs.tag }}
-        run: gh release upload "$RELEASE_TAG" dist/*.tar.gz dist/*.sha256 --clobber
+          RELEASE_TAG: ${{ inputs.tag || github.ref_name }}
+        run: |
+          if gh release view "$RELEASE_TAG" --json isDraft --jq .isDraft > release-draft.txt; then
+            if [ "$(cat release-draft.txt)" != true ]; then
+              echo "Release $RELEASE_TAG is already published; keeping assets immutable."
+              exit 0
+            fi
+            gh release upload "$RELEASE_TAG" dist/* --clobber
+          else
+            gh release create "$RELEASE_TAG" dist/* --verify-tag --generate-notes --draft --title "Hwahap $RELEASE_TAG"
+          fi
+          gh release edit "$RELEASE_TAG" --draft=false
