@@ -271,12 +271,14 @@ impl Git {
             .as_nanos();
         let path =
             std::env::temp_dir().join(format!("hwahap-index-{}-{suffix}", std::process::id()));
-        let mut builder = std::fs::DirBuilder::new();
+        let builder = std::fs::DirBuilder::new();
         #[cfg(unix)]
-        {
+        let builder = {
             use std::os::unix::fs::DirBuilderExt;
+            let mut builder = builder;
             builder.mode(0o700);
-        }
+            builder
+        };
         builder.create(&path).map_err(|e| Error::io(&path, e))?;
         let temporary = TemporaryIndex(path);
         let index = temporary.0.join("index");

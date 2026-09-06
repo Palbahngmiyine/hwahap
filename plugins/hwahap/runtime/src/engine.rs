@@ -1735,12 +1735,12 @@ impl Engine {
         Ok(plan)
     }
 
-    #[cfg(test)]
+    #[cfg(all(test, unix))]
     async fn run_command(&self, cwd: &Path, command: &str) -> Result<CommandOutput> {
         self.run_command_with_limit(cwd, command, 1024 * 1024).await
     }
 
-    #[cfg(test)]
+    #[cfg(all(test, unix))]
     async fn run_command_with_limit(
         &self,
         cwd: &Path,
