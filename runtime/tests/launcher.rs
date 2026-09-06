@@ -14,6 +14,7 @@ fn only_the_packaged_current_release_can_start() {
     let root = dir.path();
     let launcher = root.join("bin/hwahap");
     executable(&launcher, include_str!("../../bin/hwahap"));
+    fs::write(root.join("version.txt"), env!("CARGO_PKG_VERSION")).unwrap();
     let obsolete = "#!/bin/sh\necho obsolete-was-executed\n";
     executable(&root.join("runtime/target/debug/hwahap"), obsolete);
     executable(&root.join("path/hwahap"), obsolete);
@@ -33,7 +34,7 @@ fn only_the_packaged_current_release_can_start() {
     let rejected = launch();
     assert!(!rejected.status.success());
     assert!(rejected.stdout.is_empty());
-    executable(&release, "#!/bin/sh\nif [ \"${1:-}\" = --version ]; then echo 'hwahap 4.0.0'; else echo current; fi\n");
+    executable(&release, &format!("#!/bin/sh\nif [ \"${{1:-}}\" = --version ]; then echo 'hwahap {}'; else echo current; fi\n", env!("CARGO_PKG_VERSION")));
     let accepted = launch();
     assert!(accepted.status.success());
     assert_eq!(accepted.stdout, b"current\n");
@@ -48,6 +49,14 @@ fn compiled_runtime_reports_the_launcher_version() {
     assert!(out.status.success());
     assert_eq!(
         String::from_utf8(out.stdout).unwrap().trim(),
-        "hwahap 4.0.0"
+        format!("hwahap {}", env!("CARGO_PKG_VERSION"))
+    );
+}
+
+#[test]
+fn packaged_version_matches_the_crate() {
+    assert_eq!(
+        include_str!("../../version.txt").trim(),
+        env!("CARGO_PKG_VERSION")
     );
 }

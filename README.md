@@ -53,7 +53,7 @@ codex mcp add hwahap -- "$hwahap_install/bin/hwahap"
 ```
 
 `bin/hwahap`은 같은 설치의 `runtime/target/release/hwahap`만 실행하고 `--version`이
-`hwahap 4.0.0`인지 확인한다. 환경변수·debug·PATH의 다른 바이너리를 탐색하지 않는다.
+`version.txt`에 기록된 버전과 일치하는지 확인한다. 환경변수·debug·PATH의 다른 바이너리를 탐색하지 않는다.
 진단은 stderr로, MCP 응답은 stdout으로 보낸다. 등록 후 Codex에서 연결을 새로 열어
 `initialize`의 서버 버전과 제공 도구를 확인한다. 등록 명령은 [공식 MCP 문서](https://developers.openai.com/codex/mcp)를 따른다.
 

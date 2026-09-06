@@ -2,13 +2,14 @@
 # Use only this installation's current release; stdout remains the MCP transport.
 set -eu
 skill_root=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
+expected_version=$(cat "$skill_root/version.txt")
 binary="$skill_root/runtime/target/release/hwahap"
 if [ ! -x "$binary" ]; then
   echo "hwahap: build the current release with cargo build --release --manifest-path $skill_root/runtime/Cargo.toml" >&2
   exit 1
 fi
-if [ "$("$binary" --version)" != "hwahap 4.0.0" ]; then
-  echo "hwahap: this launcher requires hwahap 4.0.0; rebuild this installation." >&2
+if [ "$("$binary" --version)" != "hwahap $expected_version" ]; then
+  echo "hwahap: this launcher requires hwahap $expected_version; rebuild this installation." >&2
   exit 1
 fi
 exec "$binary" "$@"

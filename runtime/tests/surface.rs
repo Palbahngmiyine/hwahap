@@ -74,7 +74,7 @@ fn the_server_names_itself_rather_than_the_framework() {
     let info = Hwahap::new().get_info();
     assert_eq!(info.server_info.name, "hwahap");
     assert_ne!(info.server_info.name, "rmcp");
-    assert_eq!(info.server_info.version, "4.0.0");
+    assert_eq!(info.server_info.version, env!("CARGO_PKG_VERSION"));
 }
 
 #[test]
