@@ -1,310 +1,208 @@
 # Hwahap 운영 절차
 
-Hwahap은 구현 요청의 계획을 확정하거나 그 계약을 구현해 draft PR까지 진행한다. 한 run은 요청 하나의 실행 기록이며,
-unit은 그 계획 안에서 구현·검증·검토하는 작업 단위다. 정상 흐름은 다음과 같다.
+Hwahap은 구현 계획을 확정하거나 그 계약을 구현해 draft PR까지 진행한다.
+run은 요청 하나의 실행 기록이며, unit은 계획 안에서 구현·검증·검토하는 작업 단위다.
 
-`범위·성공 기준 → PLAN 라운드·CONFIRM → plan_ready 또는 BUILD → draft → 공격·방어·수정 → ADJUST 또는 SHIP`
+`범위·성공 기준 → PLAN·CONFIRM → plan_ready 또는 BUILD → draft → 공격·방어·수정 → ADJUST 또는 SHIP`
 
-사용자가 기획 생략을 명시한 direct BUILD는 고정된 별도 계약에서 구현을 시작한다.
-
-merge·배포·실사용 검증은 이후 별도 작업이다.
-
-이 문서는 `hwahap/v4` 운영 기준이다. 설치는 [README](README.md), 실제 호스트 검증 범위는
-[PLATFORM](PLATFORM.md)을 따른다. native 도구 호출·등록·완료 전달의 단일 절차는 실행 중인
-[MCP instructions](runtime/src/mcp.rs)다. 호스트는 반환된 `next`와 `message`에 따라 진행한다.
+이 문서는 `hwahap/v4` 운영 기준이다. [설치](README.md), [호스트 실행 기록](PLATFORM.md),
+[요청 형식](USAGE.md)을 참고한다. 도구 호출·등록·완료 전달은 실행 중인
+[MCP instructions](runtime/src/mcp.rs)와 반환된 `next`·`message`를 따른다.
 
 ## 1. 시작 전: 범위와 실행 환경
 
-사용자는 원하는 결과와 중요한 제약을 말한다. 파일별 구현 방식이나 작업 분해를 먼저 작성할 필요는 없다.
-다음 정보를 가능한 범위에서 전달하면 PLAN에서 확인할 쟁점이 줄어든다.
+사용자는 원하는 결과와 중요한 제약을 전달한다. Astra는 저장소를 조사하고 작업을 분해한다.
 
 | 항목 | 시작 요청에 넣을 내용 |
 |---|---|
 | 목표 | 누가 어떤 상황에서 무엇을 할 수 있어야 하는가 |
-| 성공 기준 | 관찰 가능한 동작, 반드시 통과할 검증, 허용할 성능·호환성 범위 |
-| 범위 | 포함·제외할 기능, 보존할 기존 동작, 건드리면 안 되는 파일·데이터 |
-| 환경 | 대상 저장소, 기준 브랜치, 기술 스택과 실행할 수 있는 환경 |
-| 전달 | 한 draft PR로 검토할지, 독립적으로 검토·통합할 여러 단계가 필요한지 |
+| 성공 기준 | 관찰 가능한 동작, 검증 명령, 성능·호환성 기준 |
+| 범위 | 구현할 기능과 보존할 파일·데이터·기존 동작 |
+| 환경 | 대상 저장소, 기준 브랜치, 기술 스택과 실행 환경 |
+| 전달 | 한 draft PR 또는 독립적으로 검토·통합할 여러 단계 |
 
-예: “설정 파일 검증 기능을 추가해 줘. 기존 형식은 유지하고 오류 위치를 출력해야 해.
-CLI 동작과 회귀 테스트까지 이번 PR에 포함하고, GUI와 자동 배포는 제외해.”
+호스트는 Git 상태, 기준 브랜치·commit, 기존 run, MCP 연결과 native 도구를 확인한다.
+Commit 작성자·커미터는 실행 worktree의 Git 설정을 사용하며 저장소 설정 다음에 사용자 설정을 읽는다.
+`user.name`과 `user.email`을 설정하고, 이메일은
+[GitHub 계정에 연결된 주소](https://docs.github.com/en/account-and-profile/how-tos/email-preferences/setting-your-commit-email-address)를 사용한다.
+Push 인증은 [Git credential](https://git-scm.com/docs/gitcredentials) 설정으로 관리한다.
+같은 작업의 진행·수정에는 기존 active run을 사용한다.
+소스에서 확인할 사실은 저장소를 조사하고 제품 동작·기술 선택·성공 기준은 사용자와 결정한다.
 
-호스트는 현재 Git 상태, 기준 브랜치·commit, 기존 Hwahap run, MCP 연결과 필요한 native 도구를 확인한다.
-Commit 작성자와 커미터는 실행 worktree의 Git 설정(`user.name`, `user.email` 등)을 따른다.
-저장소·worktree 설정이 없으면 사용자 설정을 읽으며 `HOME`·`XDG_CONFIG_HOME` 위치를 유지한다.
-설정이 없으면 commit을 거부한다. Hwahap 이름이나 OS 계정으로 추측하지 않고, 호출자에게서 들어온
-`GIT_AUTHOR_*`·`GIT_COMMITTER_*` 환경 변수도 전달하지 않는다. 기존 system-config 제외와 hook 차단은 유지한다.
-[Git credential](https://git-scm.com/docs/gitcredentials)은 push 인증용이며 commit 작성자 정보가 아니다.
-[GitHub는 commit 이메일로 계정을 연결](https://docs.github.com/en/account-and-profile/how-tos/email-preferences/setting-your-commit-email-address)하므로
-인증한 계정에 연결된 이메일을 Git에 설정한다. 토큰이나 비밀정보를 읽어 작성자를 추측하지 않는다.
-이미 공개된 commit의 작성자 변경은 SHA와 검토 근거를 바꾸는 별도 이력 재작성 작업이다.
-저장소에 이미 active run이 있으면 새 요청으로 덮어쓰지 않는다. 같은 작업의 진행·수정이면 기존 run을 사용한다.
-인증·빌드·권한 조건은 README를 확인한다. 소스에서 알 수 있는 사실은 저장소 조사로 해결하고,
-제품 동작·기술 선택·성공 기준처럼 사용자의 판단이 필요한 내용만 질문한다.
+Hwahap 자체를 수정할 때는 실행 commit과 바이너리 경로·해시를 기록한다.
+검증한 release로 실행하면서 소스 checkout에서 후보를 검증한다.
+실행과 pending을 종료한 뒤 검증한 스킬·release를 함께 설치하고 MCP 연결을 새로 연다.
+기존 run 재개에는 현재 schema와 필수 리뷰 필드를 갖춘 기록을 사용한다.
 
-Hwahap 자체를 수정하는 작업은 검증한 Hwahap commit과 실행 바이너리 경로·해시를 먼저 기록한다.
-활성 설치의 검증된 release를 유지한 채 소스 checkout에서 후보를 검증한다.
-작업 중 빌드되는 후보로 활성 MCP 프로세스를 교체하지 않는다. 실행과 pending을 종료한 뒤
-검증한 현재 스킬·release를 함께 설치하고 연결을 새로 연다. 현재 형식의 같은 run은 재개할 수 있으나,
-다른 schema의 run이나 누락된 리뷰 필드를 갱신해 계속 진행하는 경로는 없다.
+- 계획만 요청: `request`와 `plan_only:true`로 시작해 `plan_ready`에서 계획을 전달한다.
+- 확정 계획 구현: 사용자의 구현 요청을 받은 뒤 전체 계획 digest를 `build_confirmed`로 전달한다.
+- 계획부터 구현: `plan_only:false` 또는 기본값을 사용해 계획 확인 후 BUILD로 이어간다.
+- Codex 승인 계획: `PLEASE IMPLEMENT THIS PLAN:` 원문과 전체 계획을 `approved_plan`으로 전달한다.
+  기존 승인을 보존하고 실행 계약으로 변환한 내용을 독립 검토한다.
+- 기획 생략: 사용자가 명시한 실행 권한으로 `build`를 전달한다.
 
-기획만 요청하면 `request`와 `plan_only:true`로 시작한다. 계획 확인 후 `plan_ready`에서 멈추며
-구현·commit·PR을 만들지 않는다. 사용자가 나중에 구현을 명시적으로 요청하면 현재 전체 계획 digest를
-`build_confirmed`로 전달한다. 짧은 확인 challenge를 digest 대신 사용하지 않는다.
-`plan_only`를 생략하거나 `false`로 시작한 일반 구현 요청은 기존처럼 계획 확인 후 BUILD까지 이어진다.
-이 값은 Hwahap 작업 범위이며 Codex collaboration mode를 변경하지 않는다.
+Direct BUILD 필드는 다음과 같다.
 
-Codex에서 전체 계획에 대한 실제 `PLEASE IMPLEMENT THIS PLAN:` 요청을 이미 받았다면
-[승인 계획 전달](USAGE.md#codex에서-승인한-계획-넘기기)의 `approved_plan`을 사용한다. 누락된 실행 계약을
-원문과 연결해 구조화하고 독립 검토한다. 승인 자체를 다시 받거나 과거 인터뷰·확인 문장을 생성하지 않는다.
-기존 미실행 초안은 정확한 digest로 지정하고 이전 원문·결정을 journal에 보존한다.
-
-기획 생략을 명시한 요청에는 `request` 대신 `build`를 보낸다. 필요한 필드는 다음과 같다.
-
-- `user_instruction`: 사용자의 생략·구현 권한 원문. 확인 문장을 대신 생성하지 않는다.
+- `user_instruction`: 사용자의 기획 생략·구현 권한 원문.
 - `objective`, `base_branch`, `branch`: 목표, `origin/<base_branch>` 기준, 새 `codex/` 작업 브랜치.
 - `units`: `title`, `acceptance`, `paths`, `test_command`를 가진 순차 작업 목록.
 - `full_suite`: PR 게시와 수정 후 실행할 통합 검증 명령.
 
-실행기는 원격 기준 commit·범위·추적 관계를 검증하고 계약을 고정한다. 부모 Astra가 구현하고
-서로 다른 Astra Critic·Auditor만 자식으로 사용한다. 같은 BUILD 재전송은 동일 run을 반환한다.
-초기 worktree 생성 중 단절은 저장된 계약과 Git 상태가 정확히 일치할 때 이어간다. 다른 입력은 거부한다.
-기존 run을 다른 BUILD로 덮어쓰지 않는다. 아래 PLAN 절차는 기획을 생략하지 않은 요청에 적용한다.
+실행기는 원격 기준 commit·범위·추적 관계를 검증하고 계약을 고정한다.
+부모 Astra가 구현하고 서로 다른 Astra Critic·Auditor가 검토한다.
+동일 BUILD 재전송은 같은 run을 반환한다. 초기 worktree 생성 중 단절은 저장된 계약과 Git 상태를 확인해 재개한다.
 
 ## 2. PLAN: 결정하고 구현 계약을 확인하기
 
-기본 profile에서 Luna는 저장소 사실을 조사하고, Astra는 선택지·추천과 구현 구조를 만든다.
-부모 Astra는 추천·합성·충돌 재계획과 재작업을 맡고, 세 자식의 작성·검토 책임을 분리한다.
-기본 모델·effort와 사용자 설정은 [README의 profile 정책](ARCHITECTURE.md#5-모델effort-정책)을 따른다.
+Luna는 저장소 사실을 조사하고 부모 Astra는 선택지·추천·구현 구조를 만든다.
+[모델·effort 정책](ARCHITECTURE.md#5-모델effort-정책)에 따라 작성·검토 책임을 배정한다.
+PLAN은 선행 조건이 해결된 질문 집합인 frontier를 계산하고 최대 3개씩 UI에 전달한다.
+답변을 받은 뒤 `Refining`에서 파급 효과를 검토해 다음 라운드를 구성한다.
+이 방식은 [grilling](https://github.com/mattpocock/skills/blob/main/skills/productivity/grilling/SKILL.md)을 참고했다.
 
-PLAN은 선행 조건이 해결된 질문들의 집합인 frontier를 계산한다. 논리적 라운드 안의 질문은
-최대 3개씩 질문 UI에 전달하며, 나머지 질문과 모든 대안은 유지한다. 해당 답변을 받아 `Refining`에서
-의미·파급 효과를 다시 검토하고 새 질문을 만든다. 아직 답하지 않은 질문의 답을 추측해야 하는 질문은
-다음 라운드에 남긴다. 저장소에서 확인할 사실은 에이전트가 조사한다.
-이 라운드 방식은 사용자가 제공한 [grilling](https://github.com/mattpocock/skills/blob/main/skills/productivity/grilling/SKILL.md)을 참고했다.
+호스트는 질문·대안·추천 근거 전체를 표시하고 사용자 원문을 `question_response`로 전달한다.
+현재 배치·질문 ID·정확한 label에 결속된 응답을 채택한다.
+`UNKNOWN`은 결정 보류, 자유입력은 `Clarify`로 보존한다.
+새 해석 선택지를 사용자에게 제시하며 보충이 필요하면 `plan_conflict`에서 답을 기다린다.
+영역 질문은 원문과 함께 적용·제외를 다시 선택하게 한다.
+`CONFIRM PLAN`과 `SHIP`은 사용자가 직접 입력한 정확한 문장으로 전달한다.
 
-호스트는 `question_batch`를 현재 사용할 수 있는 Codex 질문 UI에 전달하고 결과를 `question_response`로 돌려준다.
-질문·대안·추천 근거를 줄이거나 답을 보완하지 않는다. 전체 배치에 결속된 응답만 받아들이며
-질문 ID·중복·배치 신선도 오류가 있으면 전체를 거부한다. [USAGE의 UI 전달 규칙](USAGE.md#질문-ui와-원문-응답)을 따른다.
-
-추천은 선택 전까지 제안이다. `UNKNOWN`은 미해결로 남고, 정확한 대안 label과 일치하지 않는
-자유입력은 `Clarify`로 원문을 보존한다. 결정 질문은 에이전트가 새 해석 선택지를 제안하고 사용자가
-선택할 때까지 확정하지 않는다. 해석을 만들지 못하면 `plan_conflict`에서 사용자 보충을 기다린다.
-영역 질문의 자유입력도 미해결 제안에 표시하고 적용·제외를 다시 선택하게 한다. 요청 동작은 다음
-계획 라운드의 검토 대상으로 남긴다. 적용 유지는 제외 제안을 철회한다.
-빈 응답·UI 취소·timeout은 답변이나 승인으로 취급하지 않는다. `CONFIRM PLAN`·`SHIP`은 UI 질문으로 묻지 않는다.
-
-새 대화형 run은 기획의 기준 source commit을 기록한다. 근거의 경로·줄 범위가 해당 commit의
-추적된 일반 텍스트 파일에 실제 존재하는지 검사한다. 이 검사는 근거 문장이 주장까지 뒷받침한다는
-의미 검증이 아니다. source가 바뀐 재계획은 사실·답변·영역 제외를 무효화하고 다시 확인한다.
-기존 저장 계획은 이전 digest 계산을 유지하며, 새 필드를 붙였다는 이유로 이전 승인 근거를 새 계획의 승인으로 옮기지 않는다.
-호스트가 전달한 답변 기록은 사용자 신원에 대한 암호학적 증명이 아니다. frontier가 비고 리뷰가 통과해도
-모든 미발견 결정이나 자연어 오해가 사라졌다고 단정하지 않는다.
-
-질문·답변 뒤에는 요구사항, 관찰 가능한 acceptance, unit 의존관계, unit별 테스트와 full suite가 구성된다.
-Astra Auditor의 ColdConsumer는 작성자와 독립적으로 계약을 읽고, 별도 Astra Critic의 PlanCritic은 빠진 결정·모순을 검토한다.
-완료된 검토는 현재 `review_digest`와 정확히 같을 때만 재사용한다. 내용이 달라지면 다시 검토한다.
-기계 검증과 두 검토가 끝나면 `.hwahap/plan.md`를 읽는다. 범위·경로·테스트·제외 사항이 원하는 계약인지 확인한다.
-
-승인할 때만 Hwahap이 현재 출력한 `CONFIRM PLAN <challenge>` 문장을 사용자가 그대로 입력한다.
-`<challenge>`는 계획 내용에 결속된 확인값이며 실제 출력값으로 대체해야 한다. “좋아”, “진행해”를 이 문장으로
-추론하지 않는다. 답을 바꾸면 구조와 검토를 다시 확인하고 새 challenge를 받는다. 옛 challenge는 재사용하지 않는다.
+새 run은 source commit을 기록하고 근거 경로·줄이 해당 commit의 추적 파일에 존재하는지 검사한다.
+Source가 바뀐 재계획은 사실·답변·영역 제외를 새 기준에서 확인한다.
+계획은 요구사항, 관찰 가능한 acceptance, unit 의존관계, unit별 테스트와 full suite를 담는다.
+독립된 Astra Auditor의 ColdConsumer와 Astra Critic의 PlanCritic이 계약을 검토한다.
+검토 결과는 현재 `review_digest`에 결속한다. 기계 검증과 두 검토 후 사용자는 `.hwahap/plan.md`를 확인한다.
+승인하려면 현재 출력된 `CONFIRM PLAN <challenge>`를 직접 입력한다. 계획이 바뀌면 새 challenge를 사용한다.
 
 ## 3. BUILD: 순차 구현과 draft
 
-기본 구현 요청의 계획 승인, `plan_ready` 이후 명시적 `build_confirmed`, 또는 direct BUILD의 실행 권한이
-있을 때 구현한다. 승인된 정상 실행에서는 unit마다 추가 승인을 묻지 않는다. 호스트는 Hwahap이 지정한 작업만 실행한다.
+계획 승인, 확정 계획의 `build_confirmed`, direct BUILD 권한 중 해당 경로에 따라 구현을 시작한다.
+호스트는 승인 범위 안에서 Hwahap이 지정한 작업을 진행한다.
 
-1. 의존관계 순서로 아직 유효하게 통과하지 않은 unit을 선택한다.
-2. 일반 PLAN에서는 Luna, direct BUILD에서는 부모 Astra가 허용 경로에서 첫 구현을 수행한다.
-3. 실행기가 실제 변경 경로와 테스트 명령의 종료 상태를 검사하고 Astra Critic이 unit을 검토한다.
-4. 실패하면 오류·검토 결과를 전달해 Astra가 한 번 재작업한다. 다시 실패하면 근거와 함께 중단한다.
-5. 통과한 일반 unit은 commit한다. 임시 실험인 probe의 산출물은 commit 전에 폐기한다.
-6. 모든 unit 이후 full suite를 통과하면 draft PR을 게시하고 원격 head가 검사한 commit인지 확인한다.
-7. Astra Critic이 공격 보고서를 작성하고, 별도 Astra Auditor가 각 항목을 재현·반증·미해결로 판정한다.
-8. 확인된 결함과 방어자가 찾은 추가 결함은 부모가 수정한다. 모든 구현 unit의 고정 테스트와 full suite 후 같은 PR에 push하고 두 팀을 다시 실행한다.
+1. 의존관계 순서로 실행할 unit을 선택한다.
+2. 일반 PLAN은 Luna, direct BUILD는 부모 Astra가 허용 경로에서 첫 구현을 수행한다.
+3. 실행기가 실제 변경 경로와 테스트 종료 상태를 검사하고 Astra Critic이 검토한다.
+4. 실패하면 부모 Astra가 한 번 재작업한다. 재실패는 근거를 기록하고 중단한다.
+5. 통과한 변경을 commit하고 모든 unit과 full suite가 완료되면 draft PR을 게시한다.
+6. Critic의 공격 보고서와 별도 Auditor의 방어 판정을 받는다.
+7. 확인된 결함은 부모가 수정하고 고정 테스트·full suite를 통과한 뒤 같은 PR에 push해 새 head를 재검토한다.
 
-공격·방어 모두 읽기 전용이며 Git 변경이 발견되면 결과를 폐기한다. 각 보고서는 PR URL·head SHA·
-계약 digest에 결속한다. 같은 에이전트의 양팀 참여, 오래된 결과, 누락된 판정은 검토 완료가 될 수 없다.
-미해결 판정이나 실행 예산 소진은 PR과 근거를 남기고 중단한다. 확인된 결함이 없어야 다음 단계로 간다.
+두 검토자는 읽기 전용으로 작업한다. 보고서는 PR URL·head SHA·계약 digest와 독립된 작업자 ID에 결속한다.
+방어팀은 각 공격 항목을 `confirmed/refuted/unresolved`로 판정하고 근거를 남긴다.
+미해결 항목이나 실행 예산 소진은 PR과 근거를 보존한 채 중단한다.
 
-### 보안과 미공개 취약점 검토
+### 보안 검토
 
-두 Astra는 기능 결함과 함께 알려진 CVE가 없는 취약점 가설도 검사한다. 공격팀은 변경된 입력에서
-중요한 작업까지 경로를 추적하고, 방어팀은 재현·반박 및 빠진 공격 경로를 독립적으로 확인한다.
-별도 에이전트는 추가하지 않는다. 변경된 신뢰 경계와 관련 코드에 집중해 기존 시간·호출 예산을 쓴다.
-보고서의 `security.threat_model`에는 보호 자산, 공격자가 제어하는 입력, 신뢰 경계, 환경 가정을 적는다.
+두 Astra는 변경된 입력에서 중요한 작업까지 경로를 추적하고 재현·반박과 추가 경로를 독립 검토한다.
+`security.threat_model`에는 보호 자산, 공격자가 제어하는 입력, 신뢰 경계와 환경 가정을 기록한다.
 
-| 필수 영역 | 검사 대상 예시 |
+| 필수 영역 | 검사 대상 |
 |---|---|
-| `authorization` | 인증, 권한, 소유권, tenant·저장소 경계 |
+| `authorization` | 인증·권한·소유권·tenant·저장소 경계 |
 | `untrusted_input` | 명령·경로·프롬프트 주입, symlink, 역직렬화, 네트워크 요청 |
 | `secrets` | 자격증명, 로그·산출물의 정보 노출, 암호 처리 |
-| `supply_chain` | 의존성, 빌드·업데이트 출처, 실행 가능한 hook |
-| `state_integrity` | 재전송, 경쟁 조건, 변조, 오류 시 허용, 작업 순서 우회 |
-| `resource_exhaustion` | 입력·출력 크기, 시간, 재시도·spawn 반복, 취소 |
+| `supply_chain` | 의존성, 빌드·업데이트 출처, 실행 hook |
+| `state_integrity` | 재전송, 경쟁 조건, 변조, 오류 처리와 작업 순서 |
+| `resource_exhaustion` | 입출력 크기, 시간, 재시도·spawn, 취소 |
 
-양쪽 보고서는 여섯 영역을 각각 한 번 포함한다. `checked`는 명시한 검사를 수행했다는 뜻이다.
-`not_applicable`에는 적용되지 않는 코드 근거가, `blocked`에는 확인할 수 없는 이유와 다음 검사가 필요하다.
-각 항목의 `evidence`에 파일·검사 명령과 관찰 결과를 기록하고 관련 결함 ID를 `finding_ids`로 연결한다.
-보안 결함도 기존 finding 형식을 쓰되 공격자의 전제·제어 범위, 넘은 경계, 영향, 최소 재현 또는 소스 경로,
-기대·관찰 결과와 회귀 검사 제안을 포함한다. 방어팀은 공격팀의 `checked`·해당 없음 판단도 직접 확인한다.
+양쪽 보고서에 여섯 영역을 각각 한 번 포함한다. `checked`는 수행한 검사,
+`not_applicable`은 적용 판단의 코드 근거, `blocked`는 장애 원인과 다음 검사를 기록한다.
+`evidence`에는 파일·검사 명령·관찰 결과를, `finding_ids`에는 관련 결함 ID를 연결한다.
+보안 finding은 공격자의 전제·제어 범위, 경계·영향, 최소 재현 또는 소스 경로,
+기대·관찰 결과와 회귀 검사 제안을 담는다.
 
-보안 필드·영역·근거 누락, 중복 영역, 존재하지 않는 결함 참조는 거부한다. 어느 팀이든 `blocked`이면
-검토 완료와 SHIP을 막는다. 확인된 결함은 부모가 수정하고 새 head에서 양팀이 다시 검토한다.
-필수 보안 필드가 없는 보고서는 거부하며 `recheck_pr=true`로 자동 갱신하지 않는다.
-검토 증거의 형식과 완전성을 런타임이 검증하지만, 자연어 근거의 진실성까지 증명하는 것은 아니다.
-저장소 테스트 명령은 stdout·stderr 각각 1 MiB까지만 수집한다. 한 스트림이라도 초과하면
-실패 처리하고 명령을 종료한다. 시간 제한·취소와 함께 Unix에서는 같은 process group도 종료한다.
-Git·gh 등 별도 명령 경로와 모든 자식 프로세스의 OS 자원 격리를 포괄하는 제한은 아니다.
+런타임은 필수 필드·영역·참조·근거를 검사한다. `blocked`는 검토와 SHIP을 중단한다.
+확인된 결함은 수정 후 새 head에서 두 팀이 재검토한다.
+테스트 명령 출력은 stdout·stderr 각각 1 MiB까지 수집하고 초과 시 실패 처리와 종료를 수행한다.
+시간 제한·취소 시 Unix의 같은 process group도 종료한다.
+재현에는 임시 fixture와 가짜 데이터를 사용한다. 상세 근거는 로컬에, 공개 PR에는 민감정보를 정리한 요약을 남긴다.
 
-재현은 임시 fixture와 가짜 데이터를 이용한 제한된 로컬 검사로 수행한다. 외부 시스템 공격, 실제 비밀정보
-사용, 파괴적·부하 검사는 이 과정에 포함하지 않는다. 민감한 재현 상세는 로컬 근거에 두고 공개 PR에는
-비밀정보를 제거한 요약을 남긴다. 스캐너 통과나 CVE 부재는 제로데이 부재·발견 확정의 증거가 아니다.
-이 절차는 미지의 결함 발견 가능성을 높이지만 모든 취약점의 부재를 보증하지 않는다.
-
-검토 범위는 [OWASP WSTG](https://owasp.org/www-project-web-security-testing-guide/stable/4-Web_Application_Security_Testing/)의
-권한·입력·업무 로직 검사와 [Threat Modeling](https://cheatsheetseries.owasp.org/cheatsheets/Threat_Modeling_Cheat_Sheet.html)의
-자산·위협·경계 분석을 참고했다. [NIST SSDF 1.1](https://csrc.nist.gov/pubs/sp/800/218/final)은
-개발 과정에 보안 검증을 통합하고 발견한 취약점의 근본 원인을 다루는 근거다. 여섯 영역과 상태 게이트는
-Hwahap의 구현 선택이며 해당 문서에 대한 인증이나 전체 준수를 뜻하지 않는다.
-
-에이전트의 “테스트 통과” 문장만으로 성공을 판정하지 않는다. 실제 명령 결과·Git 변경·독립 리뷰를 확인한다.
-작업 중 사용자가 같은 worktree를 수정하거나 별도 프로세스로 commit·push하면 실행 기준이 달라질 수 있다.
-필요한 변경은 현재 run의 계획·수정 흐름에 전달하고, 호스트가 별도로 병행 구현하지 않는다.
-
-진행 상태는 `hwahap_status`로 확인한다. 상태 조회는 새 에이전트 생성이나 재실행 요청이 아니다.
-draft가 나오면 diff, 테스트·리뷰 근거, 계획 충족 여부, 미검증 환경, 비용의 보고 범위를 읽는다.
+검토 영역은 [OWASP WSTG](https://owasp.org/www-project-web-security-testing-guide/stable/4-Web_Application_Security_Testing/),
+[Threat Modeling](https://cheatsheetseries.owasp.org/cheatsheets/Threat_Modeling_Cheat_Sheet.html),
+[NIST SSDF 1.1](https://csrc.nist.gov/pubs/sp/800/218/final)을 참고해 구현했다.
+진행 중 변경 요청은 현재 run의 계획·수정 흐름에 전달한다. 상태는 `hwahap_status`로 확인한다.
 
 ## 4. ADJUST와 SHIP
 
-현재 계약의 구현 오류를 수정하려면 `adjust_build`에 사용자의 `user_instruction` 원문, 현재
-`contract_digest`, 대상 `unit_ids`를 보낸다. 이 경로는 기존 acceptance·테스트·허용 경로를 유지한다.
-계약을 바꿔야 하는 요청은 이 수정 권한에 포함되지 않는다.
+기존 계약의 구현 수정은 `adjust_build`에 사용자 원문, 현재 `contract_digest`, 대상 `unit_ids`를 담는다.
+Acceptance·테스트·허용 경로 변경은 `user_input`으로 PLAN을 열고 새 계약을 확인한다.
+유효한 accepted unit은 유지하고 변경된 unit과 의존 unit을 다시 수행한다.
+계획·통과 기록은 같은 run에서, 에이전트는 같은 저장소·부모 pool에서 재사용한다.
 
-draft의 요구사항이나 계약을 바꿀 점이 있으면 같은 run의 `user_input`에 피드백을 보낸다. `ADJUST`라는 명령 문법을 외울 필요는 없다.
-예: “오류 메시지에 잘못된 키 이름도 포함해 줘.” 호스트는 사용자의 원문을 전달한다.
-계획 revision이 증가하고 필요한 결정·구조를 다시 만들며, 사용자는 새 계획의 `CONFIRM PLAN`을 입력한다.
-이 일반 ADJUST는 direct BUILD로 시작했어도 PLAN을 열 수 있다. 기획 생략이 모든 후속 변경의 승인은 아니다.
+사용자가 현재 `SHIP <challenge>`를 입력하면 계약 결속, 현재 PR head의 두 독립 검토,
+결함 해결과 필수 checks를 확인한 뒤 draft를 ready로 전환한다.
+이후 코드 소유자 리뷰·merge·배포는 각 작업의 승인과 운영 절차에 따라 진행한다.
 
-계약이 유효한 accepted unit은 유지한다. 변경된 unit과 그에 의존하는 unit은 다시 수행한다.
-기존 작업 브랜치와 일치하는 draft PR을 갱신한다. 계획·통과 기록 재사용은 같은 run에 한정한다.
-에이전트는 아래의 동일 저장소·부모 pool 범위에서 재사용하며, 모든 대화나 미완료 작업을 복구하는 것은 아니다.
-외부에서 PR을 ready로 바꿨거나 PR 식별 조건이 맞지 않으면 갱신을 거부할 수 있으므로 상태와 메시지를 확인한다.
-
-검토 가능한 결과가 되었을 때 사용자가 현재 출력된 `SHIP <challenge>`를 정확히 입력한다.
-Hwahap은 계약 결속, 현재 PR head에 대한 두 독립 검토·미해결 결함 부재, 필수 checks를 확인하고 draft를 ready로 바꾼다.
-**SHIP은 merge가 아니다.** 자동 merge·배포·운영 성공을 뜻하지 않는다.
-
-ready 이후 코드 소유자 리뷰, merge, 배포, 마이그레이션, 실제 사용자 경로 확인은 별도의 작업이다.
-배포·데이터 변경은 해당 작업의 승인 범위와 운영 절차에 따른다. 로컬 테스트만 가능한 경우에는
-실사용 검증을 미완료로 기록하고, 필요한 환경에서 확인하기 전까지 전체 제품 성공을 주장하지 않는다.
-
-검토 재개는 `hwahap_step`에 같은 `cwd`, `host_session_id`와 `recheck_pr=true`만 보낸다.
-이 run의 draft URL·브랜치·깨끗한 worktree·원격 head·계약이 맞아야 full suite로 돌아간다.
-완료한 검토는 새 round에서 다시 받고, 단절된 검토의 저장 보고서와 누적 수정 횟수는 보존한다.
-현재 형식에서 보안 미확인·미해결로 중단된 검토는 명시적 재검토 시 새 round를 연다.
-PR 진행 기록 또는 필수 보고서 필드가 없으면 중단하며 과거 기록을 새 형식으로 보충하지 않는다.
-진행 중인 repair의 commit 복구 기록은 유지한다. 버전 변경은 그 복구를 마친 뒤 수행한다.
-PR이 닫혔거나 ready로 바뀌었으면 다른 PR을 자동 생성하지 않는다. dirty 수정은 자동 폐기하지 않는다.
-수정 commit은 예정 SHA를 저장한 뒤 branch를 이동하므로 commit·push 사이 단절을 같은 PR에서 복구한다.
-예정 commit을 저장하기 전 중단된 dirty 수정은 이 자동 복구에 포함되지 않는다.
-기록된 PR 갱신은 저장된 URL로만 수행하며 조회 사이 다른 PR이 생겨도 채택하지 않는다.
-수정 push 뒤 알려진 이전 head만 보이면 최대 4회, 500ms 간격으로 조회한다. 예상 밖 head는 즉시 중단하고,
-계속 불일치하면 관찰한 SHA와 예정 SHA를 오류에 남긴다. API 명령 자체의 시간은 이 간격과 별개다.
+검토 재개는 같은 `cwd`·`host_session_id`와 `recheck_pr:true`로 요청한다.
+기존 draft URL·브랜치·깨끗한 worktree·원격 head·계약을 확인하고 full suite부터 진행한다.
+완료된 검토는 새 round를 열며 단절된 검토의 저장 보고서·누적 수정 횟수는 유지한다.
+현재 schema의 필수 진행 기록과 보고서 필드를 사용한다.
+진행 중 repair의 예정 commit 기록을 이용해 commit·push 사이 단절을 같은 PR에서 복구한다.
+예정 commit 저장 전의 dirty 변경은 사용자가 검토·보존·정리한다.
+PR 갱신은 저장된 URL을 사용한다. 수정 push 후 이전 head가 조회되면 최대 4회, 500ms 간격으로 재조회한다.
+다른 head 또는 지속되는 불일치는 관찰·예정 SHA를 기록하고 중단한다.
 
 ## 5. 큰 기능을 여러 단계로 진행하기
 
-큰 요청을 검토 가능한 작업으로 나누는 책임은 Astra의 계획 역할과 조정 호스트에 있다.
-사용자가 모든 unit을 직접 분해하지 않는다. Astra는 전체 목표·범위·인터페이스·성공 기준을 먼저 정리하고,
-단계마다 독립적으로 검증할 결과와 의존관계를 제안한다. 사용자는 중요한 범위·기술 결정과 단계 경계를 확인한다.
+Astra가 전체 목표·범위·인터페이스·성공 기준을 정리하고 검증 가능한 단계와 의존관계를 제안한다.
+사용자는 중요한 범위·기술 결정과 단계 경계를 확인한다.
 
-| 선택 | 적합한 경우 | 운영 방법 |
-|---|---|---|
-| 한 run·한 PR | 하나의 계약과 최종 검증으로 검토할 수 있고 중간 변경을 따로 통합할 필요가 없음 | 한 PLAN 안에서 여러 순차 unit으로 나눈다. 같은 run의 ADJUST로 수정한다. |
-| 여러 run·여러 PR | 단계별 결과를 독립 검토·통합하거나 다음 단계의 기준 코드로 확정할 필요가 있음 | 전체 계약과 단계표를 문서에 남기고, 각 run에 해당 단계의 범위·성공 기준·선행 commit을 명시한다. |
+| 구성 | 운영 방법 |
+|---|---|
+| 한 run·한 PR | 하나의 계약에 순차 unit을 두고 같은 run의 ADJUST로 수정한다. |
+| 여러 run·여러 PR | 전체 계약·단계표를 남기고 각 run에 범위·성공 기준·선행 commit을 명시한다. |
 
-여러 run의 전체 계약에는 단계 간 API·상태 형식·호환성, 최종 통합 검증, 각 단계의 완료 조건을 남긴다.
-다음 run은 그 문서와 실제 선행 commit을 함께 읽어야 한다. 앞선 대화가 자동으로 전달된다고 가정하지 않는다.
-Hwahap은 전체 단계표를 보고 다음 run을 자동 생성하거나 여러 PR을 자동 통합하지 않는다.
-일반 run마다 PLAN과 `CONFIRM PLAN`, direct BUILD마다 명시적 실행 권한과 고정 계약이 필요하다.
-각 draft의 ready 전환에는 자기 `SHIP`이 필요하다.
-전체 목표에 대한 동의가 모든 후속 run의 challenge를 대신하지 않는다.
+단계표에는 API·상태 형식·호환성, 통합 검증과 완료 조건을 기록한다.
+다음 run은 문서와 실제 선행 commit을 읽는다. 일반 run은 PLAN 확인, direct BUILD는 명시적 실행 권한,
+각 draft의 ready 전환은 해당 `SHIP`을 사용한다.
 
-Hwahap 자체처럼 큰 기능을 새로 만드는 경우 다음과 같이 단계별 결과를 정할 수 있다.
+단계별 결과 예시:
 
-1. 계획·승인·상태 저장: 최소 사용자 경로와 저장 후 재시작을 검증한다.
-2. native 실행·복구: 역할 하나의 실제 연결부터 확인하고 생성 거절·단절을 재현한다.
-3. 구현·독립 검토·PR: 실제 작은 변경을 계획에서 draft까지 진행한다.
-4. 전체 통합: 단계 간 계약, 기존 데이터·설치 호환성, 회귀 테스트와 실제 호스트 경로를 확인한다.
+1. 계획·승인·상태 저장과 재시작.
+2. native 실행·생성 실패·단절 복구.
+3. 구현·독립 검토·draft PR.
+4. 계약·데이터·설치 호환성과 실제 호스트 통합 검증.
 
-각 단계는 작동하는 결과와 실패 재현 방법을 남긴다. 단계 수는 고정 규칙이 아니며 검증 결과에 따라 조정한다.
-
-이전 run을 SHIP한 직후에도 기본 브랜치에는 그 변경이 없을 수 있다. 다음 단계가 이전 코드를 필요로 한다면
-보통 이전 PR을 별도로 merge하고, 대상 checkout을 갱신한 뒤 기준 브랜치와 commit을 확인해서 시작한다.
-merge 전 브랜치에 의존하는 구성이 필요하면 그 기반을 명시적으로 선택하고 검토한다. Hwahap이 자동으로
-이전 PR의 head를 다음 run의 기반으로 삼거나 stacked PR을 관리한다고 가정하지 않는다.
-일반 `request`는 종료된 run의 소유 작업 트리를 확인하고 새로 시작한다. 미커밋 변경이나 ignored 파일이
-남아 있으면 기존 run을 archive하거나 파일을 삭제하지 않고 거부한다. 남은 파일을 사용자가 검토·보존·정리한
-후 재개하거나 새 checkout을 사용한다. 자동 생성 cache도 사용자 파일과 구분해 삭제하지 않는다.
-작업 트리가 안전하게 제거된 뒤 기존 run을 archive한다. direct `build`는 기존 run과 다른 요청을 거부하므로
-새 checkout에서 시작한다. 기존 run의 accepted 기록을 새 run이 이어받지는 않는다.
+선행 코드가 필요하면 이전 PR을 merge하고 checkout·기준 commit을 갱신한다.
+브랜치에 직접 의존할 때는 그 기반을 명시한다.
+종료된 run의 작업 트리에 남은 변경과 ignored 파일을 검토·보존·정리한 뒤 새 run을 시작한다.
+작업 트리 정리 후 기존 run을 archive하며, 새로운 direct BUILD는 새 checkout에서 시작한다.
 
 ## 6. 중단 상태별 대응
 
-| 상태 | 의미 | 다음 행동 |
-|---|---|---|
-| `plan_ready/continue` | Codex 승인 계획의 검토는 끝났고 BUILD 시작이 중단됨 | 기존 권한으로 계속한다. 인증·source 등 실패 원인을 해결하고 재호출한다. 승인 원문을 다시 요구하지 않는다. |
-| `plan_ready/await_user` | 계획만 요청한 run의 계약 확인이 완료됨 | 그대로 계획 결과를 전달한다. 명시적 구현 요청을 받은 뒤 전체 digest를 `build_confirmed`로 전달한다. |
-| 승인 import의 미고정 `plan_conflict/repair_translation` | 승인 원문과 실행 명세 사이 변환 결함 | `approved_plan`으로 명세를 수정하고 현재 초안 digest를 지정한다. 승인을 유지하며, 실제 새 선택만 사용자에게 묻는다. |
-| 그 외 `plan_conflict` (`PlanConflict`) | 계약 밖 구현 변경이 필요하거나 자유입력 해석을 완성하지 못함 | 원문·충돌을 읽고 사용자 답·수정 요구를 전달해 PLAN을 다시 연다. direct BUILD에서도 사용자 입력을 기다리며, 자동 구현 재개 없이 재검토·재확인을 거친다. |
-| `blocked` | 반복 실패·검증 실패·지원 불가 등으로 해당 실행이 멈춤 | 원인·테스트·Git 상태·증거를 확인한다. 해결되지 않은 원인으로 같은 호출을 반복하지 않는다. 원인 해결과 남은 실행의 종료 확인 후 새 요청은 별도 run·승인으로 시작한다. |
-| `native_paused` | 호스트가 자식 생성이 없었다고 확인한 spawn 실패·native 도구 부재를 저장함 | 실패를 알리고 자동 재시도·polling·새 요청을 멈춘다. 기존 run을 유지하고 새 호스트 회복 근거를 관찰했을 때만 명시적으로 재개한다. |
-| `native_stop` | 자식 생성 여부가 불명확하거나 단절·timeout으로 종료 확인이 필요함 | 같은 dispatch를 다시 spawn하지 않는다. 정확한 에이전트와 남은 명령을 찾아 중단·확인한 뒤 해당 dispatch를 확인 처리한다. 종료가 불명확하면 복구하지 않는다. |
-| 입력 거부 | 형식·challenge·현재 단계가 맞지 않음 | 오류 메시지를 읽고 현재 계획에 맞는 사용자 입력을 다시 전달한다. 거부된 입력을 승인으로 바꾸지 않는다. |
+| 상태 | 의미와 다음 행동 |
+|---|---|
+| `plan_ready/continue` | 승인 계획의 검토 완료. 시작 장애를 해결하고 기존 구현 권한으로 재개한다. |
+| `plan_ready/await_user` | 계획 결과를 전달한다. 구현 요청을 받으면 전체 digest를 `build_confirmed`로 전달한다. |
+| `plan_conflict/repair_translation` | 승인 원문을 유지하고 실행 명세를 수정해 현재 초안 digest와 함께 `approved_plan`으로 전달한다. |
+| 그 외 `plan_conflict` | 원문·충돌을 읽고 사용자 입력으로 PLAN의 결정·계약을 재검토한다. |
+| `blocked` | 원인·테스트·Git 상태를 확인하고 남은 실행을 종료한다. 원인 해결 후 새 요청은 별도 run으로 시작한다. |
+| `native_paused` | spawn 실패를 저장한 상태. run·plan·accepted unit을 유지하고 새 호스트 회복 관찰로 재개한다. |
+| `native_stop` | 해당 dispatch의 에이전트와 명령을 찾아 종료를 확인한 뒤 복구한다. |
+| 입력 오류 | 현재 단계·계약·challenge에 맞는 사용자 원문을 전달한다. |
 
-`native_stop`은 사용자에게 새 제품 결정을 받는 단계가 아니라 남은 실행을 확인하는 복구 절차다.
-timeout이 났다는 이유만으로 에이전트·명령이 끝났다고 가정하지 않는다. `.hwahap` 파일을 손으로 고치거나
-삭제해 승인·복구 검사를 건너뛰지 않는다. 정상 복구로 해결되지 않으면 원인과 남은 실행을 먼저 기록한다.
+복구에는 저장된 상태와 정상 MCP 절차를 사용한다.
+`native_paused`의 새 관찰은 해당 재시도에 한 번 사용하며 재개 요청도 64회 기본 예산에 포함한다.
+저장된 run 단계에서 재개하므로 진행 중인 unit이나 역할을 다시 수행할 수 있다.
 
-`native_paused`에서는 정확한 실패 내용과 dispatch가 저장되고 run·plan·accepted unit은 유지된다.
-재개 근거는 native 도구나 호스트 capacity 복구처럼 새로 관찰한 상태여야 한다. 유지 중인 자식을 닫아 교체하지 않는다.
-시간이 지났거나 화면에 Done이 표시된 것, 옛 설명을 바꿔 쓴 것은 회복 근거가 아니다.
-같은 근거를 다른 재시도에 재사용할 수 없으며, 재개 뒤 새 dispatch도 기본 요청 한도 64회에 포함된다.
-재개는 새 PLAN 승인이 아니라 운영 복구다. 저장된 run 단계에서 다시 진행하므로 아직 accepted가 아닌
-unit이나 그 단계의 역할은 반복될 수 있다. 모든 미완료 변경이나 정확한 역할 위치의 보존을 기대하지 않는다.
+pool은 같은 저장소·부모의 Worker·Critic·Auditor ID와 모델·effort를 유지한다.
+첫 생성 이후 같은 ID에 follow-up하며 최초 슬롯 부족이나 유지한 자식의 소실은 실행 중단으로 처리한다.
+기본 hard timeout은 native 요청당 180초다. soft 목표는 사실·계약·plan/unit 리뷰·진단 60초,
+구현·재작업·최종 리뷰 120초, 나머지 계획 역할 90초이며 hard 값으로 상한을 둔다.
+최대 30초 이벤트 대기를 사용하고 `native-timing-<id>.json`에 시각·크기·종료 사유를 기록한다.
+시간에는 호스트 전달 대기가 포함된다. Git·GitHub·테스트 명령은 각각의 명령 실행 절차를 따른다.
+Unit 재시작은 해당 시도의 변경과 ignored 산출물을 초기화하므로 빌드 캐시는 worktree 밖에 둔다.
+[호스트 한도](https://learn.chatgpt.com/docs/config-file/config-reference)와
+[스레드 관리](https://learn.chatgpt.com/docs/agent-configuration/subagents)는 공식 설정을 참고한다.
 
-같은 저장소와 같은 부모 `host_session_id`에는 일반 경로의 Worker Luna와 Critic·Auditor Astra를 최대 하나씩 유지한다.
-direct BUILD는 부모가 작성하므로 검토자 두 ID만 필요하다. `native-owner.json`은 pending 제거 뒤에도 부모를 고정한다.
-첫 자식만 새로 만들고 이후 작업은 동일 ID에 follow-up한다. 완료마다 close/spawn하지 않으므로
-같은 pool의 반복 작업만으로 네 번째 자식을 만들지 않는다. 기존 작업자의 모델·effort를 바꾸거나
-다른 작업자 그룹으로 돌리지 않는다. 필요한 최초 슬롯이 부족하거나 유지한 자식이 사라지면 실행을 중단한다.
-다른 저장소·부모는 별도 pool이며, 전역 한도를 늘리거나 무관한 작업을 닫아 우회하지 않는다.
-완료·interrupt는 슬롯 반환 증거가 아니다. 상세 호출 절차는 MCP instructions를 따른다.
+## 7. 완료 보고
 
-기본 hard timeout은 180초다. soft 목표는 사실·ColdConsumer·plan/unit 리뷰·FailureDiagnosis 60초,
-구현·재작업·최종 리뷰 120초, 나머지 계획 역할 90초이며 hard 값보다 길 수 없다.
-호스트는 최대 30초의 이벤트 대기로 진행을 확인한다. soft 목표 도달은 완료나 자동 취소의 근거가 아니다.
-시간을 맞추려고 검증을 생략하거나 통과를 꾸미지 않고, 막힌 이유를 결과 계약에 맞게 보고한다.
-`native-timing-<id>.json`에서 요청·등록·종료 시각, 입력·출력 크기와 종료 사유를 확인한다.
-native 제한에는 호스트의 전달 대기도 포함된다. Git·GitHub·테스트 명령에는 이 180초 상한이 적용되지 않는다.
-현재 unit 재시작은 미승인 변경과 ignored 산출물을 초기화하므로 빌드 캐시는 worktree 밖에 두는 편이 낫다.
-과거 360초 지연의 원인이나 동일 조건에서의 개선 수치는 아직 확인하지 않았다.
-[공식 한도 정의](https://learn.chatgpt.com/docs/config-file/config-reference)와
-[스레드 관리 설명](https://learn.chatgpt.com/docs/agent-configuration/subagents)은 플랫폼 기능의 근거이며,
-현재 호스트에 해당 도구가 노출되거나 슬롯 반환이 실제 검증됐다는 뜻은 아니다.
+- run ID, 계획 revision·digest, 기준 commit, 작업 브랜치·PR URL, 실행 버전.
+- 변경 동작, 테스트 명령·결과, 독립 리뷰, 실행 환경과 다음 확인 항목.
+- 통제된 fixture 테스트와 실제 호스트 실행의 출처.
+- 요청·완료·재작업·중단 수, 사용량 관측 범위와 가격표 기반 추정값.
+- 현재 단계: `plan_ready`, draft, ready, merged, deployed 또는 실사용 검증 완료.
 
-## 7. 완료 보고에 남길 것
-
-- run ID, 계획 revision·digest, 기준 commit, 작업 브랜치와 PR URL, 검증에 사용한 Hwahap 버전.
-- 변경된 동작과 포함·제외 범위, 실제 테스트 명령·결과, 독립 리뷰 결과, 남은 실패·미검증 환경.
-- 통제된 스크립트·`gh` stub 테스트인지 실제 Codex 호스트 실행인지 구분한 증거.
-- 요청·완료·재작업·중단·미완료 수와 제공된 사용량. [사용량 계측](USAGE.md)의 부모·자식 세션 등록, 누락 범위와 단가표를 기록한다. 추정 비용과 실제 청구액을 구분한다.
-- 현재 단계가 plan_ready, draft, ready, merged, deployed, 실사용 검증 완료 중 어디까지인지 각각 표시. 계획만 완료한 run에는 구현·PR 성공을 보고하지 않는다.
-
-호스트 canary의 일부 단계 통과는 전체 모델 실행 성공과 다르다. 실패·취소된 시도도 시간을 쓰고 비용이
-발생할 수 있다. 사용량 누락을 0으로 계산하거나 요청 수 감소만으로 실제 비용 절감을 단정하지 않는다.
-capacity 복구 테스트는 통제한 실패 주입이다. 실제 pool 고갈·스레드 해제·해제 후 재실행의 증거는 별도다.
-
-운영 동작의 근거는 [상태 기계](runtime/src/engine.rs), [계획 계약](runtime/src/plan.rs),
-[native 복구](runtime/src/native/host.rs), [PR 검사](runtime/src/forge.rs), [비용 집계](runtime/src/cost.rs)다.
+[사용량 계측](USAGE.md)에 따라 부모·자식 세션을 등록하고 미계측은 `unknown`으로 표시한다.
+운영 구현은 [상태 기계](runtime/src/engine.rs), [계획 계약](runtime/src/plan.rs),
+[native 복구](runtime/src/native/host.rs), [PR 검사](runtime/src/forge.rs), [비용 집계](runtime/src/cost.rs)에 있다.
