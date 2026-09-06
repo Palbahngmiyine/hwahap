@@ -201,13 +201,17 @@ fn reviewers_keep_independent_lanes_and_missing_inventory_waits() {
     );
 }
 
+#[cfg(unix)]
 mod common;
+#[cfg(unix)]
 use hwahap::{
     native::{NativeCompletion, NativeLane, NativeRegistration, NativeSessions},
     session::SessionSpec,
     state::Store,
 };
+#[cfg(unix)]
 use std::sync::Arc;
+#[cfg(unix)]
 fn native_fixture(shared: bool) -> (common::Fixture, Store, TaskAssessment) {
     let f = common::Fixture::new();
     f.engine()
@@ -237,6 +241,7 @@ fn native_fixture(shared: bool) -> (common::Fixture, Store, TaskAssessment) {
     a.topology.write_paths = plan.units[0].paths.clone();
     (f, store, a)
 }
+#[cfg(unix)]
 async fn dispatch_job(
     f: &common::Fixture,
     store: &Store,
@@ -301,6 +306,7 @@ async fn dispatch_job(
     broker.finish().unwrap();
     request.decision.reason_codes.join(",")
 }
+#[cfg(unix)]
 async fn refusal(f: &common::Fixture, store: &Store, a: &TaskAssessment, record: bool) -> String {
     if record {
         hwahap::delegation::store::record(store, a).unwrap();
@@ -317,6 +323,7 @@ async fn refusal(f: &common::Fixture, store: &Store, a: &TaskAssessment, record:
     assert!(broker.dispatch().unwrap().is_none());
     error.to_string()
 }
+#[cfg(unix)]
 #[tokio::test]
 async fn actual_dispatch_reuses_worker_and_falls_back_to_capable_parent() {
     let (f, store, mut a) = native_fixture(false);
@@ -344,6 +351,7 @@ async fn actual_dispatch_reuses_worker_and_falls_back_to_capable_parent() {
         "bound_capability_insufficient"
     );
 }
+#[cfg(unix)]
 #[tokio::test]
 async fn actual_overlap_routes_parent_and_missing_assessment_waits() {
     let (f, store, a) = native_fixture(true);
@@ -363,6 +371,7 @@ async fn actual_overlap_routes_parent_and_missing_assessment_waits() {
         "shared_state"
     );
 }
+#[cfg(unix)]
 #[tokio::test]
 async fn actual_pending_dependency_and_high_risk_prevent_author_dispatch() {
     let (f, store, mut a) = native_fixture(false);
@@ -376,6 +385,7 @@ async fn actual_pending_dependency_and_high_risk_prevent_author_dispatch() {
         .await
         .contains("recovery_validation_required"));
 }
+#[cfg(unix)]
 #[tokio::test]
 async fn actual_capacity_and_reviewer_availability_are_enforced() {
     for case in 0..4 {
@@ -411,23 +421,28 @@ async fn actual_capacity_and_reviewer_availability_are_enforced() {
     }
 }
 
+#[cfg(unix)]
 #[tokio::test]
 async fn high_risk_actual_build_reviews_and_tests_recovery_before_parent_writes() {
     high_risk_case(false, false, 0).await;
 }
+#[cfg(unix)]
 #[tokio::test]
 async fn failed_preflight_review_prevents_commands_and_author() {
     high_risk_case(true, false, 0).await;
 }
+#[cfg(unix)]
 #[tokio::test]
 async fn failed_isolated_recovery_prevents_author() {
     high_risk_case(false, true, 0).await;
 }
+#[cfg(unix)]
 struct FailUntrackedCleanup {
     trigger: std::path::PathBuf,
     directory: std::path::PathBuf,
     armed: std::sync::atomic::AtomicBool,
 }
+#[cfg(unix)]
 impl hwahap::clock::Clock for FailUntrackedCleanup {
     fn now(&self) -> String {
         if self.trigger.exists() && !self.armed.swap(true, std::sync::atomic::Ordering::SeqCst) {
@@ -438,6 +453,7 @@ impl hwahap::clock::Clock for FailUntrackedCleanup {
         common::NOW.into()
     }
 }
+#[cfg(unix)]
 #[tokio::test]
 async fn final_failed_author_recovers_after_tracked_reset_before_untracked_cleanup() {
     // The injected filesystem failure requires an unprivileged process.
@@ -446,6 +462,7 @@ async fn final_failed_author_recovers_after_tracked_reset_before_untracked_clean
     }
     high_risk_case(false, false, 5).await;
 }
+#[cfg(unix)]
 async fn high_risk_case(review_failure: bool, recovery_failure: bool, interruption: u8) {
     use hwahap::engine::{BuildRequest, BuildUnit};
     let f = common::Fixture::new();
@@ -713,6 +730,7 @@ async fn high_risk_case(review_failure: bool, recovery_failure: bool, interrupti
     );
 }
 
+#[cfg(unix)]
 #[tokio::test]
 async fn shared_mutable_resource_routes_parent_without_overlapping_paths() {
     let (f, store, mut a) = native_fixture(false);
@@ -735,6 +753,7 @@ async fn shared_mutable_resource_routes_parent_without_overlapping_paths() {
         "shared_state"
     );
 }
+#[cfg(unix)]
 #[tokio::test]
 async fn stale_host_records_wait_without_starting_a_dispatch() {
     let (f, store, a) = native_fixture(false);
@@ -764,6 +783,7 @@ async fn stale_host_records_wait_without_starting_a_dispatch() {
     assert_eq!(decisions[0].reason_codes, vec!["host_stale"]);
     assert_eq!(decisions[0].route, Route::Wait);
 }
+#[cfg(unix)]
 #[test]
 fn planned_profile_changes_unit_fingerprint_and_invalid_owner_cannot_pin_evidence() {
     let (_f, store, mut a) = native_fixture(false);
@@ -777,10 +797,12 @@ fn planned_profile_changes_unit_fingerprint_and_invalid_owner_cannot_pin_evidenc
     hwahap::delegation::store::record(&store, &a).unwrap();
 }
 
+#[cfg(unix)]
 #[tokio::test]
 async fn interrupted_high_risk_author_resumes_after_stop_with_same_attempt() {
     high_risk_case(false, false, 1).await;
 }
+#[cfg(unix)]
 async fn resume_interrupted_high_risk(
     f: &common::Fixture,
     store: &Store,
@@ -1038,6 +1060,7 @@ async fn resume_interrupted_high_risk(
     .unwrap();
     host.shutdown().await;
 }
+#[cfg(unix)]
 #[tokio::test]
 async fn author_available_without_independent_reviewers_waits_before_dispatch() {
     let (f, store, a) = native_fixture(false);
@@ -1049,6 +1072,7 @@ async fn author_available_without_independent_reviewers_waits_before_dispatch() 
         .contains("model_unavailable"));
 }
 
+#[cfg(unix)]
 #[tokio::test]
 async fn author_waits_when_slots_cannot_cover_worker_and_both_reviewers() {
     let (f, store, a) = native_fixture(false);
@@ -1061,15 +1085,18 @@ async fn author_waits_when_slots_cannot_cover_worker_and_both_reviewers() {
         .contains("slot_unavailable"));
 }
 
+#[cfg(unix)]
 #[tokio::test]
 async fn interrupted_rejected_high_risk_candidate_keeps_consumed_attempt_and_retries() {
     high_risk_case(false, false, 2).await;
 }
+#[cfg(unix)]
 #[tokio::test]
 async fn interrupted_rejected_high_risk_candidate_reaches_exhausted_budget() {
     high_risk_case(false, false, 3).await;
 }
 
+#[cfg(unix)]
 #[tokio::test]
 async fn interrupted_rejected_candidate_resumes_partly_completed_cleanup_from_backup() {
     high_risk_case(false, false, 4).await;
