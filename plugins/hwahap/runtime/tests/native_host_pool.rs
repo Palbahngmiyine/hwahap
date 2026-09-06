@@ -24,7 +24,7 @@ async fn start_run(fixture: &Fixture) {
         .step(Some("Inspect the repository"), None)
         .await
         .unwrap();
-    common::fixture_observation(&Store::open(&fixture.repo).unwrap(), OWNER);
+    common::fixture_native_observation(&Store::open(&fixture.repo).unwrap(), OWNER);
 }
 
 #[tokio::test]
@@ -44,6 +44,7 @@ async fn active_and_orphan_agents_reject_missing_or_different_parent_ownership()
     .await
     .unwrap();
     let registered = NativeRegistration {
+        decision_digest: Some(request.decision.digest.clone()),
         dispatch_id: request.dispatch_id.clone(),
         agent_id: "owned-worker".into(),
     };
@@ -73,6 +74,7 @@ async fn active_and_orphan_agents_reject_missing_or_different_parent_ownership()
                     0 => attempted.registration = Some(registered.clone()),
                     1 => {
                         attempted.completion = Some(NativeCompletion {
+                            decision_digest: Some(request.decision.digest.clone()),
                             dispatch_id: request.dispatch_id.clone(),
                             agent_id: "owned-worker".into(),
                             final_message: "{}".into(),
@@ -124,6 +126,7 @@ async fn archived_runs_preserve_old_pool_and_start_new_run_bindings() {
                 NativeSessions::new(store.clone(), 1000, 30).with_host_session_id(OWNER.into()),
             );
             let spec = hwahap::session::SessionSpec {
+                assessment: None,
                 cwd: fixture.repo.clone(),
                 role,
                 unit: None,
@@ -148,11 +151,13 @@ async fn archived_runs_preserve_old_pool_and_start_new_run_bindings() {
             assert_eq!(request.run_id == first_run, generation == 0);
             broker
                 .register(&NativeRegistration {
+                    decision_digest: Some(request.decision.digest.clone()),
                     dispatch_id: request.dispatch_id.clone(),
                     agent_id: agent.into(),
                 })
                 .unwrap();
             broker.complete(NativeCompletion {
+                decision_digest: Some(request.decision.digest.clone()),
                 final_message: serde_json::json!({"dispatch_id":request.dispatch_id,"result":{"generation":generation}}).to_string(),
                 dispatch_id: request.dispatch_id, agent_id: agent.into(), agent_stopped: true, reported_usage: None,
             }).unwrap();

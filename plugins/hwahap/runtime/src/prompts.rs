@@ -301,6 +301,8 @@ pub fn structure(plan: &Plan) -> String {
 
 # Your job: turn these settled decisions into a graph that can be built
 
+For each unit, populate task_profiles with requirements (capabilities 0..3 and depth routine/focused/deep), risk (failure_cost, reversibility, blast_radius: 0..2, where 2 is high cost/hard to undo/broad impact), topology (predecessors, coupling independent/shared, shared_resources, writer_owner, separable, write_paths), source evidence, and recovery (null or environment/user_authorization/failure_command/recovery_command). Use unit IDs as keys and run for the aggregate task. Base coupling on source evidence and shared mutable resources. Match writer_owner and write_paths to the unit contract. Reviewers assess these profiles independently. Missing evidence requires a fact investigation. High risk requires an approved disposable checkout and executable failure/recovery checks before implementation.
+
 Goal: {goal}
 
 ## The decisions
@@ -652,7 +654,7 @@ Your final message must be exactly this JSON object and nothing else:
 /// inside it can close it and go on writing the brief at column zero. Callers put Hwahap's own
 /// instructions after the block as well: a forged section arriving last would otherwise be the last
 /// thing the model reads.
-fn quoted(span: &str) -> String {
+pub(crate) fn quoted(span: &str) -> String {
     let fence = "`".repeat(longest_backtick_run(span).max(2) + 1);
     format!("{DATA_NOTICE}\n\n{fence}\n{span}\n{fence}")
 }

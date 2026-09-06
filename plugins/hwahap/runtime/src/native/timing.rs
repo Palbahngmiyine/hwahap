@@ -167,7 +167,7 @@ mod tests {
         let id = "b".repeat(64);
         let dispatch: super::super::NativeDispatch =
             serde_json::from_value(serde_json::json!({
-                "dispatch_id": id, "run_id": "r", "role": "fact_finder","selection":{"run_id":"run","host_session_id":"parent","role":"recommender","unit":null,"model":"m","effort":"high","requirements":{"capabilities":{},"depth":"deep"},"tools":[],"catalog_digest":"catalog","host_digest":"host","digest":"selection"}, "profile": "economy",
+                "dispatch_id": id, "run_id": "r", "role": "fact_finder","assessment":crate::delegation::test_payload().0,"decision":crate::delegation::test_payload().1,"selection":{"run_id":"run","host_session_id":"parent","role":"recommender","unit":null,"model":"m","effort":"high","requirements":{"capabilities":{},"depth":"deep"},"tools":[],"catalog_digest":"catalog","host_digest":"host","digest":"selection"}, "profile": "economy",
                 "model": "m", "effort": "medium", "cwd": "/tmp", "access": "read_only",
                 "coordinator_allowed": false, "prompt_digest": "p", "base_head": "h",
                 "brief": "facts", "stop_required": false, "pool_scope":"parent", "lane":"worker", "soft_budget_secs":60, "hard_timeout_secs":180

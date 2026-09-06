@@ -38,10 +38,12 @@ mod approved_plan;
 mod build;
 mod grounding;
 mod implementation_commit;
+mod interrupted_author;
 mod interview;
 mod lifecycle;
 mod planning;
 mod pr_review;
+mod preflight;
 mod revalidation;
 mod verification;
 pub use adjust_build::AdjustBuildRequest;
@@ -52,6 +54,9 @@ pub use build::{BuildRequest, BuildUnit};
 /// Boxed futures rather than `async fn` in the trait, because the engine holds it behind `dyn` so
 /// that a scripted implementation can stand in for native dispatch.
 pub trait Sessions: Send + Sync {
+    fn preflight(&self, _spec: &SessionSpec) -> Result<()> {
+        Ok(())
+    }
     fn run<'a>(
         &'a self,
         spec: &'a SessionSpec,
@@ -535,6 +540,7 @@ impl Engine {
             let structure = proposal::StructureProposal::parse(&structure.final_message, &plan)?;
             plan.requirements = structure.requirements;
             plan.acceptance = structure.acceptance;
+            plan.task_profiles = structure.task_profiles;
             plan.units = structure.units;
             plan.tests = structure.tests;
             plan.full_suite = structure.full_suite;
@@ -965,6 +971,20 @@ impl Engine {
         worktree: &Path,
         sessions: &dyn Sessions,
     ) -> Result<UnitOutcome> {
+        self.recover_interrupted_author(plan, unit, worktree)?;
+        self.high_risk_preflight(plan, Some(&unit.id), Role::Implementer, sessions)
+            .await?;
+        sessions.preflight(&SessionSpec {
+            assessment: crate::delegation::store::load(
+                &self.store,
+                Role::Implementer,
+                Some(&unit.id),
+            )?,
+            cwd: worktree.into(),
+            role: Role::Implementer,
+            unit: Some(unit.id.clone()),
+            prompt: String::new(),
+        })?;
         let checkpoint = self.git.run_in(worktree, &["rev-parse", "HEAD"])?;
         let adjustment_findings = self.build_adjustment_findings(plan, unit)?;
         let mut findings = adjustment_findings.clone();
@@ -1101,12 +1121,14 @@ impl Engine {
                 .cloned()
                 .chain(rejected.unwrap_or_default())
                 .collect();
+            let (candidate_code, _) =
+                self.backup_author_candidate(worktree, &checkpoint, &reservation)?;
             crate::revalidation::finish_attempt(
                 &self.store,
                 &*self.clock,
                 &reservation,
                 false,
-                serde_json::json!({"findings":findings}),
+                serde_json::json!({"findings":findings,"candidate_code":candidate_code}),
             )?;
         }
 
@@ -1448,6 +1470,7 @@ impl Engine {
             }
         };
         let spec = SessionSpec {
+            assessment: crate::delegation::store::load(&self.store, role, unit.as_deref())?,
             cwd,
             role,
             unit,

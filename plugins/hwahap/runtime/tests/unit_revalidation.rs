@@ -649,3 +649,99 @@ async fn t15_post_commit_pr_failure_and_timeout_finish_attempts_and_bound_revali
         assert!(empty.calls().is_empty());
     }
 }
+
+struct InterruptedPrWriter;
+impl hwahap::engine::Sessions for InterruptedPrWriter {
+    fn run<'a>(
+        &'a self,
+        spec: &'a hwahap::session::SessionSpec,
+    ) -> std::pin::Pin<
+        Box<
+            dyn std::future::Future<Output = hwahap::error::Result<hwahap::session::SessionOutcome>>
+                + Send
+                + 'a,
+        >,
+    > {
+        Box::pin(async move {
+            assert_eq!(spec.role, Role::Rework);
+            std::fs::write(spec.cwd.join("one"), "interrupted PR candidate").unwrap();
+            Err(hwahap::error::Error::Internal(
+                "injected author interruption".into(),
+            ))
+        })
+    }
+}
+#[tokio::test]
+async fn interrupted_pr_author_preserves_patch_and_resumes_same_repair_attempt() {
+    use hwahap::pr_review::ReviewProgress;
+    let fixture = reviewed().await;
+    let engine = fixture.engine();
+    let store = Store::open(&fixture.repo).unwrap();
+    engine.recheck_pr().unwrap();
+    engine
+        .step_with(&Script::new(vec![]), None, None)
+        .await
+        .unwrap();
+    let binding = ReviewProgress::load(&store).unwrap().unwrap().binding;
+    let finding = serde_json::json!({"id":"A1","file":"one","line":1,"condition":"wrong output","expected":"corrected","observed":"initial","evidence":["checked actual file"]});
+    let rejection = Script::new(vec![
+        step(Role::UnitReviewer, Reply::say(serde_json::json!({"binding":binding,"security":common::security_review(),"findings":[finding],"evidence":["observed output"]}).to_string())),
+        step(Role::FinalReview, Reply::say(serde_json::json!({"binding":binding,"security":common::security_review(),"assessments":[{"finding_id":"A1","judgment":"confirmed","evidence":["independent observation"]}],"additional_findings":[],"evidence":["checked source"]}).to_string()))]);
+    engine.step_with(&rejection, None, None).await.unwrap();
+    assert!(engine
+        .step_with(&InterruptedPrWriter, None, None)
+        .await
+        .unwrap_err()
+        .to_string()
+        .contains("injected author interruption"));
+    assert_eq!(
+        std::fs::read_to_string(fixture.worktree().join("one")).unwrap(),
+        "interrupted PR candidate"
+    );
+    let repairs = ReviewProgress::load(&store).unwrap().unwrap().repairs;
+    let attempts = || {
+        store
+            .read_events()
+            .unwrap()
+            .into_iter()
+            .filter(|e| e.kind == "unit_attempt_started" && e.data["kind"] == "implementation")
+            .map(|e| e.data)
+            .collect::<Vec<_>>()
+    };
+    let before = attempts();
+    let repair = Script::new(vec![step(
+        Role::Rework,
+        Reply::write(
+            &[("one", "corrected")],
+            r#"{"status":"completed","summary":"fixed"}"#,
+        ),
+    )]);
+    let result = fixture
+        .engine()
+        .step_with(&repair, None, None)
+        .await
+        .unwrap();
+    assert_eq!(result.state, "pr_review");
+    assert_eq!(attempts(), before);
+    assert_eq!(
+        ReviewProgress::load(&store).unwrap().unwrap().repairs,
+        repairs
+    );
+    let saved = store
+        .read_events()
+        .unwrap()
+        .into_iter()
+        .find(|e| e.kind == "interrupted_author_reconciled")
+        .unwrap();
+    let artifact = std::fs::read_to_string(
+        store
+            .artifacts_path()
+            .join(saved.data["evidence"].as_str().unwrap()),
+    )
+    .unwrap();
+    assert!(artifact.contains("interrupted PR candidate"));
+    assert_eq!(
+        std::fs::read_to_string(fixture.worktree().join("one")).unwrap(),
+        "corrected"
+    );
+}

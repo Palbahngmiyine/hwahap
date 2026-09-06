@@ -23,6 +23,8 @@ pub fn access_for(role: Role) -> Access {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SessionSpec {
+    #[serde(default)]
+    pub assessment: Option<crate::delegation::TaskAssessment>,
     pub cwd: PathBuf,
     pub role: Role,
     pub unit: Option<String>,
@@ -50,6 +52,10 @@ impl TokenUsage {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct NativeReceipt {
+    #[serde(default)]
+    pub decision: Option<crate::delegation::DelegationDecision>,
+    #[serde(default)]
+    pub assessment: Option<crate::delegation::TaskAssessment>,
     pub selection: crate::catalog::Selection,
     pub dispatch_id: String,
     pub agent_id: String,
@@ -78,6 +84,24 @@ impl SessionReceipt {
         match self {
             Self::Native(receipt) => {
                 receipt.selection.verify()?;
+                if let Some(decision) = &receipt.decision {
+                    decision.verify()?;
+                    let assessment = receipt
+                        .assessment
+                        .as_ref()
+                        .ok_or_else(|| Error::Rejected("native assessment missing".into()))?;
+                    assessment.validate()?;
+                    if decision.selection.as_ref() != Some(&receipt.selection)
+                        || decision.assessment_digest != Some(assessment.digest()?)
+                        || decision.task_digest != Some(assessment.task_digest()?)
+                        || decision.catalog_digest != receipt.selection.catalog_digest
+                        || decision.host_digest != Some(receipt.selection.host_digest.to_string())
+                    {
+                        return Err(Error::Rejected("native delegation evidence differs".into()));
+                    }
+                } else if receipt.assessment.is_some() {
+                    return Err(Error::Rejected("native decision missing".into()));
+                }
                 if receipt.selection.role != receipt.role.as_str()
                     || receipt.selection.unit != receipt.unit
                     || receipt.selection.model != receipt.model_requested
@@ -109,6 +133,21 @@ impl SessionReceipt {
         self.verify()?;
         let Self::Native(receipt) = self;
         receipt.selection.verify_catalog(snapshot)?;
+        if let Some(assessment) = &receipt.assessment {
+            if assessment.role != spec.role
+                || assessment.unit != spec.unit
+                || assessment.run_id != snapshot.run_id
+                || assessment.merged(&snapshot.catalog.role_requirements[&spec.role])?
+                    != receipt.selection.requirements
+            {
+                return Err(Error::Rejected("native task requirements differ".into()));
+            }
+        }
+        if spec.assessment.is_some() && spec.assessment != receipt.assessment {
+            return Err(Error::Rejected(
+                "native task assessment differs from session".into(),
+            ));
+        }
         if receipt.role != spec.role || receipt.unit != spec.unit {
             return Err(Error::UnsupportedProfile(
                 "native result role or unit differs from its dispatch".into(),
@@ -151,6 +190,8 @@ mod tests {
             .into(),
         };
         let receipt = SessionReceipt::Native(NativeReceipt {
+            assessment: None,
+            decision: None,
             selection: crate::catalog::Selection::new(
                 &snapshot,
                 &observation,

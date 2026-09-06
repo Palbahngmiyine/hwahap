@@ -32,6 +32,26 @@ impl Selection {
         model: &str,
         effort: &str,
     ) -> Result<Self> {
+        Self::for_requirements(
+            snapshot,
+            observation,
+            role,
+            unit,
+            model,
+            effort,
+            snapshot.catalog.role_requirements[&role].clone(),
+        )
+    }
+    #[allow(clippy::too_many_arguments)]
+    pub fn for_requirements(
+        snapshot: &CatalogSnapshot,
+        observation: &HostObservation,
+        role: Role,
+        unit: Option<String>,
+        model: &str,
+        effort: &str,
+        requirements: Requirements,
+    ) -> Result<Self> {
         let mut selection = Self {
             run_id: snapshot.run_id.clone(),
             host_session_id: observation.host_session_id.clone(),
@@ -39,7 +59,7 @@ impl Selection {
             unit,
             model: model.into(),
             effort: effort.into(),
-            requirements: snapshot.catalog.role_requirements[&role].clone(),
+            requirements,
             tools: tools_for(role),
             catalog_digest: snapshot.digest.to_string(),
             host_digest: observation.digest()?.to_string(),
@@ -75,7 +95,16 @@ impl Selection {
             .find(|r| r.as_str() == self.role)
             .expect("verified role");
         if self.catalog_digest != snapshot.digest.to_string()
-            || self.requirements != snapshot.catalog.role_requirements[&role]
+            || self.requirements.depth < snapshot.catalog.role_requirements[&role].depth
+            || snapshot.catalog.role_requirements[&role]
+                .capabilities
+                .iter()
+                .any(|(k, v)| self.requirements.capabilities.get(k).copied().unwrap_or(0) < *v)
+            || self
+                .requirements
+                .capabilities
+                .iter()
+                .any(|(k, v)| !identifier(k) || *v > 3)
             || self.tools != tools_for(role)
             || !snapshot
                 .catalog

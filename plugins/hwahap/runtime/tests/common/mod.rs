@@ -177,6 +177,8 @@ impl Script {
             .unwrap_or_else(|| run.run_id.clone());
         let host = fixture_observation(&store, &parent);
         let mut receipt = NativeReceipt {
+            assessment: None,
+            decision: None,
             selection: hwahap::catalog::Selection::new(
                 &snapshot,
                 &host,
@@ -547,4 +549,52 @@ pub fn fixture_observation(
     };
     hwahap::catalog::host::observe(store, &SystemClock, &parent, &observed).unwrap();
     observed
+}
+
+pub fn fixture_assessments(store: &hwahap::state::Store) {
+    use hwahap::delegation::*;
+    let run = store.read_run().unwrap().unwrap();
+    let plan = store.read_plan().unwrap().unwrap();
+    for unit in std::iter::once(None).chain(plan.units.iter().map(Some)) {
+        for role in Role::ALL {
+            let assessment = TaskAssessment {
+                run_id: run.run_id.clone(),
+                contract_digest: plan.digest().unwrap().to_string(),
+                unit: unit.map(|u| u.id.clone()),
+                role,
+                requirements: hwahap::catalog::Requirements {
+                    capabilities: Default::default(),
+                    depth: hwahap::catalog::Depth::Routine,
+                },
+                risk: Risk {
+                    failure_cost: Some(0),
+                    reversibility: Some(0),
+                    blast_radius: Some(0),
+                },
+                topology: Topology {
+                    predecessors: unit.map(|u| u.depends_on.clone()).unwrap_or_default(),
+                    coupling: Coupling::Independent,
+                    shared_resources: vec![],
+                    writer_owner: Some(
+                        unit.map(|u| u.id.clone())
+                            .unwrap_or_else(|| run.run_id.clone()),
+                    ),
+                    separable: true,
+                    write_paths: unit.map(|u| u.paths.clone()).unwrap_or_else(|| {
+                        plan.units.iter().flat_map(|u| u.paths.clone()).collect()
+                    }),
+                },
+                evidence: vec!["test-owned disposable repository; no external resources".into()],
+                recovery: None,
+            };
+            store::record(store, &assessment).unwrap();
+        }
+    }
+}
+pub fn fixture_native_observation(
+    store: &hwahap::state::Store,
+    parent: &str,
+) -> hwahap::catalog::HostObservation {
+    fixture_assessments(store);
+    fixture_observation(store, parent)
 }

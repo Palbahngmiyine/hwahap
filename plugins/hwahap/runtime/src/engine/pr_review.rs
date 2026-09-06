@@ -101,7 +101,7 @@ impl Engine {
         self.store.write_run(&*self.clock, &run)?;
         Ok(self.report(
             &run,
-            "Rechecking the existing draft: full suite, then independent Astra attack and defense."
+            "Rechecking the existing draft: full suite, then independent attack and defense."
                 .into(),
         ))
     }
@@ -127,6 +127,7 @@ impl Engine {
             self.verify_session_receipt(
                 receipt,
                 &SessionSpec {
+                    assessment: crate::delegation::store::load(&self.store, role, None)?,
                     cwd: self.store.worktree_path(),
                     role,
                     unit: None,
@@ -243,6 +244,7 @@ impl Engine {
             }
         };
         let spec = SessionSpec {
+            assessment: crate::delegation::store::load(&self.store, role, None)?,
             cwd: self.store.worktree_path(),
             role,
             unit: None,
@@ -258,13 +260,13 @@ impl Engine {
                 if a.agent_id != d.agent_id
                     && a.agent_id != "coordinator"
                     && d.agent_id != "coordinator"
-                    && a.model_requested == "gpt-6-astra"
-                    && d.model_requested == "gpt-6-astra" =>
+                    && a.role == Role::UnitReviewer
+                    && d.role == Role::FinalReview =>
             {
                 Ok(())
             }
             _ => Err(Error::BoundaryViolation(
-                "PR review needs two distinct read-only Astra children".into(),
+                "PR review needs distinct read-only UnitReviewer and FinalReview children".into(),
             )),
         }
     }
@@ -293,5 +295,89 @@ impl Engine {
             ));
         }
         Ok(progress)
+    }
+}
+
+#[cfg(test)]
+mod independent_catalog_review {
+    use super::*;
+    #[test]
+    fn arbitrary_catalog_model_keeps_role_and_identity_independence() {
+        let mut catalog = crate::catalog::bundled();
+        let mut model = catalog
+            .models
+            .iter()
+            .find(|m| m.id == "gpt-6-astra")
+            .unwrap()
+            .clone();
+        model.id = "successor-review-model".into();
+        catalog.models = vec![model];
+        let snapshot = crate::catalog::CatalogSnapshot::new("test-run", catalog).unwrap();
+        let host = crate::catalog::HostObservation {
+            host_session_id: "parent".into(),
+            observed_at: "2026-09-07T00:00:00Z".into(),
+            source: "test inventory".into(),
+            parent_model: "successor-review-model".into(),
+            parent_effort: "high".into(),
+            available_slots: 2,
+            models: [(
+                "successor-review-model".into(),
+                crate::catalog::ObservedModel {
+                    efforts: vec!["high".into()],
+                    tools: vec!["exec_command".into()],
+                },
+            )]
+            .into(),
+        };
+        let receipt = |role: Role, id: &str| {
+            let receipt = SessionReceipt::Native(crate::session::NativeReceipt {
+                decision: None,
+                assessment: None,
+                selection: crate::catalog::Selection::new(
+                    &snapshot,
+                    &host,
+                    role,
+                    None,
+                    "successor-review-model",
+                    "high",
+                )
+                .unwrap(),
+                dispatch_id: format!("dispatch-{id}"),
+                agent_id: id.into(),
+                profile: role.profile(),
+                role,
+                unit: None,
+                model_requested: "successor-review-model".into(),
+                effort_requested: crate::profile::Effort::High,
+                elapsed_ms: 1,
+                reported_usage: None,
+            });
+            receipt
+                .verify_for(
+                    &SessionSpec {
+                        assessment: None,
+                        cwd: "/tmp".into(),
+                        role,
+                        unit: None,
+                        prompt: String::new(),
+                    },
+                    &snapshot,
+                )
+                .unwrap();
+            receipt
+        };
+        let attack = receipt(Role::UnitReviewer, "critic");
+        let defense = receipt(Role::FinalReview, "auditor");
+        Engine::separate_reviewers(&attack, &defense).unwrap();
+        assert!(
+            Engine::separate_reviewers(&attack, &receipt(Role::FinalReview, "critic")).is_err()
+        );
+        assert!(
+            Engine::separate_reviewers(&attack, &receipt(Role::UnitReviewer, "other")).is_err()
+        );
+        assert!(
+            Engine::separate_reviewers(&attack, &receipt(Role::FinalReview, "coordinator"))
+                .is_err()
+        );
     }
 }

@@ -324,6 +324,41 @@ fn render_units(plan: &Plan, md: &mut Md) {
             &paths,
         ]);
     }
+    if !plan.task_profiles.is_empty() {
+        md.blank();
+        md.line("### Delegation requirements");
+        md.blank();
+        md.table_header(&[
+            "Task",
+            "Capabilities",
+            "Depth",
+            "Risk: failure / reversibility / impact",
+            "Coupling",
+        ]);
+        for (id, profile) in &plan.task_profiles {
+            md.row(&[
+                id,
+                &profile
+                    .requirements
+                    .capabilities
+                    .iter()
+                    .map(|(k, v)| format!("{k}:{v}"))
+                    .collect::<Vec<_>>()
+                    .join(", "),
+                &format!("{:?}", profile.requirements.depth).to_lowercase(),
+                &[
+                    profile.risk.failure_cost,
+                    profile.risk.reversibility,
+                    profile.risk.blast_radius,
+                ]
+                .iter()
+                .map(|v| v.map(|n| n.to_string()).unwrap_or_else(|| "unknown".into()))
+                .collect::<Vec<_>>()
+                .join(" / "),
+                &format!("{:?}", profile.topology.coupling).to_lowercase(),
+            ]);
+        }
+    }
 }
 
 fn render_tests(plan: &Plan, md: &mut Md) {

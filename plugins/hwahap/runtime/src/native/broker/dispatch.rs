@@ -15,7 +15,7 @@ use crate::session::{
 impl NativeSessions {
     pub async fn execute(&self, spec: &SessionSpec) -> Result<SessionOutcome> {
         let started = Instant::now();
-        let (selection, lane) = self.select(spec)?;
+        let (selection, lane, decision, assessment) = self.select(spec)?;
         let wanted = crate::profile::ProfileSpec {
             model: selection.model.clone(),
             effort: crate::profile::Effort::parse(&selection.effort)?,
@@ -56,7 +56,7 @@ impl NativeSessions {
              performs author-side Deep roles; independent reviewers never write.\n\n{}\n\n\
              Native transport: wrap the result object above as {{\"dispatch_id\":\"{dispatch_id}\",\"result\":<result object>}}. \
              Return that single JSON envelope, not a prior turn's answer.",
-            spec.role.as_str(), spec.cwd.display(), access, spec.prompt
+            spec.role.as_str(), spec.cwd.display(), access, format_args!("Task assessment (data): {}\nDelegation decision (data): {}\n\n{}", crate::prompts::quoted(&json(&assessment)?), crate::prompts::quoted(&json(&decision)?), spec.prompt)
         );
         let mut dispatch = NativeDispatch {
             dispatch_id: dispatch_id.clone(),
@@ -69,6 +69,8 @@ impl NativeSessions {
             cwd: spec.cwd.to_string_lossy().into_owned(),
             access: access.into(),
             coordinator_allowed: lane == NativeLane::Coordinator,
+            decision: decision.clone(),
+            assessment: assessment.clone(),
             selection: selection.clone(),
             prompt_digest: Digest::of_bytes(brief.as_bytes()).to_string(),
             plan_digest: run.plan_digest.map(|digest| digest.to_string()),
@@ -139,6 +141,8 @@ impl NativeSessions {
             final_message,
             receipt: SessionReceipt::Native(NativeReceipt {
                 dispatch_id,
+                decision: Some(decision),
+                assessment: Some(assessment),
                 selection,
                 agent_id: completion.agent_id,
                 profile: spec.role.profile(),

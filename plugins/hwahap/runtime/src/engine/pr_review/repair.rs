@@ -49,8 +49,9 @@ impl Engine {
         let prepared = match read_evidence::<PreparedRepair>(&self.store, &key)? {
             Some(prepared) => prepared,
             None => {
+                let resuming = self.recover_interrupted_pr_author(&plan, &p, &paths)?;
                 self.require_review_progress(&run, &plan)?;
-                if u64::from(p.repairs) >= self.config.native_max_calls {
+                if !resuming && u64::from(p.repairs) >= self.config.native_max_calls {
                     return Err(Error::ExecutionLimit(
                         "PR repair budget exhausted; draft and evidence retained".into(),
                     ));
@@ -59,11 +60,6 @@ impl Engine {
                     &self.store,
                     &format!("{key}-failed-{}.json", p.repairs),
                 )?;
-                p.repairs = p
-                    .repairs
-                    .checked_add(1)
-                    .ok_or_else(|| Error::ExecutionLimit("PR repair count overflow".into()))?;
-                p.save(&self.store)?;
                 let unit = Unit {
                     id: "PR".into(),
                     title: "Repair confirmed PR findings".into(),
@@ -79,7 +75,7 @@ impl Engine {
                 if let Some(failure) = previous_failure {
                     details.push(format!("The previous repair failed `{}`: {}. Its full patch and results are retained at {}",
                         failure["command"], tail(failure["output"].as_str().unwrap_or("unknown"), 4000),
-                        self.store.artifacts_path().join(format!("{key}-failed-{}.json", p.repairs - 1)).display()));
+                        self.store.artifacts_path().join(format!("{key}-failed-{}.json", p.repairs)).display()));
                 }
                 // Repairs may change every non-probe unit: retain each frozen test obligation.
                 let commands: std::collections::BTreeSet<String> = plan
@@ -95,6 +91,22 @@ impl Engine {
                     prompts::implementer(&plan, &unit, &details),
                     serde_json::to_string(&commands).expect("command serialization")
                 );
+                self.high_risk_preflight(&plan, None, Role::Rework, sessions)
+                    .await?;
+                sessions.preflight(&crate::session::SessionSpec {
+                    assessment: crate::delegation::store::load(&self.store, Role::Rework, None)?,
+                    cwd: worktree.clone(),
+                    role: Role::Rework,
+                    unit: None,
+                    prompt: String::new(),
+                })?;
+                if !resuming {
+                    p.repairs = p
+                        .repairs
+                        .checked_add(1)
+                        .ok_or_else(|| Error::ExecutionLimit("PR repair count overflow".into()))?;
+                    p.save(&self.store)?;
+                }
                 let mut attempts = Vec::new();
                 for target in plan.units.iter().filter(|u| !u.probe) {
                     if crate::revalidation::obligations(&self.store, &run.run_id, &target.id)?
@@ -117,12 +129,14 @@ impl Engine {
                 let result = WorkerResult::parse(&outcome.final_message)?;
                 if result.status != WorkerStatus::Completed {
                     for attempt in &attempts {
+                        let (candidate_code, _) =
+                            self.backup_author_candidate(&worktree, &p.binding.head, attempt)?;
                         crate::revalidation::finish_attempt(
                             &self.store,
                             &*self.clock,
                             attempt,
                             false,
-                            serde_json::json!({"worker":result}),
+                            serde_json::json!({"worker":result,"candidate_code":candidate_code}),
                         )?;
                     }
                     return Err(Error::BoundaryViolation(format!(
@@ -166,12 +180,14 @@ impl Engine {
                                 "command":command,"output":check.combined,"patch":patch}),
                         )?;
                         for attempt in &attempts {
+                            let (candidate_code, _) =
+                                self.backup_author_candidate(&worktree, &p.binding.head, attempt)?;
                             crate::revalidation::finish_attempt(
                                 &self.store,
                                 &*self.clock,
                                 attempt,
                                 false,
-                                serde_json::json!({"command":command,"output":check.combined}),
+                                serde_json::json!({"command":command,"output":check.combined,"candidate_code":candidate_code}),
                             )?;
                         }
                         // Only discard this owned attempt after durable reproduction evidence exists.

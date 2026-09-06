@@ -71,6 +71,7 @@ async fn completed_native_reviews_refresh_the_final_published_cost_report() {
     .unwrap();
     assert_eq!(published_cost["total"]["requests"], 0);
     let binding = ReviewProgress::load(&store).unwrap().unwrap().binding;
+    common::fixture_assessments(&store);
     let sessions = Arc::new(NativeSessions::new(store.clone(), 64, 20));
     let engine = f.engine();
     let runner = sessions.clone();
@@ -93,6 +94,7 @@ async fn completed_native_reviews_refresh_the_final_published_cost_report() {
         let agent_id = format!("independent-reviewer-{n}");
         sessions
             .register(&NativeRegistration {
+                decision_digest: Some(dispatch.decision.digest.clone()),
                 dispatch_id: dispatch.dispatch_id.clone(),
                 agent_id: agent_id.clone(),
             })
@@ -104,6 +106,7 @@ async fn completed_native_reviews_refresh_the_final_published_cost_report() {
         };
         sessions
             .complete(NativeCompletion {
+                decision_digest: Some(dispatch.decision.digest.clone()),
                 dispatch_id: dispatch.dispatch_id.clone(),
                 agent_id,
                 final_message:

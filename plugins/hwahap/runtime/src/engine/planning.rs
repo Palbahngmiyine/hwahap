@@ -280,6 +280,7 @@ impl Engine {
             Ok(structure) => {
                 candidate.requirements = structure.requirements;
                 candidate.acceptance = structure.acceptance;
+                candidate.task_profiles = structure.task_profiles;
                 candidate.units = structure.units;
                 candidate.tests = structure.tests;
                 candidate.full_suite = structure.full_suite;

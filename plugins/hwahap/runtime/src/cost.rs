@@ -272,7 +272,7 @@ mod tests {
             store,
             "request",
             id,
-            json!({"dispatch_id":id,"run_id":"run","role":"recommender","selection":{"run_id":"run","host_session_id":"parent","role":"recommender","unit":null,"model":"m","effort":"high","requirements":{"capabilities":{},"depth":"deep"},"tools":[],"catalog_digest":"catalog","host_digest":"host","digest":"selection"},
+            json!({"dispatch_id":id,"run_id":"run","role":"recommender","assessment":crate::delegation::test_payload().0,"decision":crate::delegation::test_payload().1,"selection":{"run_id":"run","host_session_id":"parent","role":"recommender","unit":null,"model":"m","effort":"high","requirements":{"capabilities":{},"depth":"deep"},"tools":[],"catalog_digest":"catalog","host_digest":"host","digest":"selection"},
             "profile":"deep","unit":null,"model":model,"effort":"high","cwd":"/tmp",
             "access":"read_only","coordinator_allowed":true,"prompt_digest":"x",
             "plan_digest":null,"base_head":"head","brief":"task","agent_id":null,"stop_required":false,"pool_scope":"parent","lane":"coordinator","soft_budget_secs":60,"hard_timeout_secs":180}),

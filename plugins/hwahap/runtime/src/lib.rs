@@ -47,3 +47,4 @@ where
 }
 
 pub mod catalog;
+pub mod delegation;

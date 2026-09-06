@@ -234,6 +234,8 @@ pub(crate) fn missing_recommendation_fields(recommendation: &Recommendation) -> 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct StructureProposal {
+    #[serde(default)]
+    pub task_profiles: std::collections::BTreeMap<String, crate::delegation::TaskProfile>,
     pub requirements: Vec<Requirement>,
     pub acceptance: Vec<Acceptance>,
     pub units: Vec<Unit>,
@@ -251,7 +253,7 @@ impl StructureProposal {
         r#""acceptance":[{"id":"A1","requirement_ids":["R1"],"observable":"..."}],"#,
         r#""units":[{"id":"U1","title":"...","paths":["src/"],"acceptance_ids":["A1"],"depends_on":[],"probe":false}],"#,
         r#""tests":[{"id":"T1","command":"...","acceptance_ids":["A1"],"unit_id":"U1"}],"#,
-        r#""full_suite":"...","verification_inputs":[]}"#
+        r#""full_suite":"...","verification_inputs":[],"task_profiles":{}}"#
     );
 
     /// Parses and validates the structure. Cross-references into the plan are checked here; the

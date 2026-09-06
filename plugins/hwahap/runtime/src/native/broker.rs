@@ -71,6 +71,12 @@ impl NativeSessions {
                 "registration does not match an active dispatch".into(),
             ));
         }
+        dispatch.verify_decision()?;
+        if registration.decision_digest.as_deref() != Some(&dispatch.decision.digest) {
+            return Err(Error::Rejected(
+                "registration decision digest differs".into(),
+            ));
+        }
         super::pool::check_registration(&self.store, dispatch, &registration.agent_id)?;
         if waiting.pending.completion.is_some() {
             return Ok(());
@@ -121,6 +127,10 @@ impl NativeSessions {
             return Err(Error::Rejected(
                 "completion does not match the registered native dispatch".into(),
             ));
+        }
+        dispatch.verify_decision()?;
+        if completion.decision_digest.as_deref() != Some(&dispatch.decision.digest) {
+            return Err(Error::Rejected("completion decision digest differs".into()));
         }
         super::reply::result(&completion)?;
         if let Some(previous) = &waiting.pending.completion {
@@ -250,6 +260,10 @@ impl NativeSessions {
 }
 
 impl crate::engine::Sessions for NativeSessions {
+    fn preflight(&self, spec: &crate::session::SessionSpec) -> Result<()> {
+        self.select(spec).map(|_| ())
+    }
+
     fn run<'a>(
         &'a self,
         spec: &'a crate::session::SessionSpec,

@@ -78,13 +78,14 @@ async fn fixture(
         .await
         .unwrap();
     let store = Store::open(temp.path()).unwrap();
-    common::fixture_observation(&store, &store.read_run().unwrap().unwrap().run_id);
+    common::fixture_native_observation(&store, &store.read_run().unwrap().unwrap().run_id);
     let broker = Arc::new(NativeSessions::new(
         Store::open(temp.path()).unwrap(),
         max_calls,
         timeout,
     ));
     let spec = SessionSpec {
+        assessment: None,
         cwd: temp.path().into(),
         role: Role::FactFinder,
         unit: None,
@@ -118,6 +119,7 @@ async fn registered_result_is_durable_bound_and_consumed_once() {
     assert_eq!(request.lane, hwahap::native::NativeLane::Worker);
     assert!(!request.base_head.is_empty());
     let mut completion = NativeCompletion {
+        decision_digest: Some(request.decision.digest.clone()),
         dispatch_id: request.dispatch_id.clone(),
         agent_id: "child-1".into(),
         final_message: serde_json::json!({"dispatch_id":request.dispatch_id,"result":{"facts":[]}})
@@ -131,6 +133,7 @@ async fn registered_result_is_durable_bound_and_consumed_once() {
     );
     broker
         .register(&NativeRegistration {
+            decision_digest: Some(request.decision.digest.clone()),
             dispatch_id: request.dispatch_id.clone(),
             agent_id: "child-1".into(),
         })
@@ -157,6 +160,7 @@ async fn registered_result_is_durable_bound_and_consumed_once() {
     broker.finish().unwrap();
     assert!(orphan(&store).unwrap().is_none());
     let spec = SessionSpec {
+        assessment: None,
         cwd: temp.path().into(),
         role: Role::FactFinder,
         unit: None,
@@ -184,11 +188,13 @@ async fn completion_write_failures_do_not_deliver_and_exact_retry_delivers_once(
         let request = broker.dispatch().unwrap().unwrap();
         broker
             .register(&NativeRegistration {
+                decision_digest: Some(request.decision.digest.clone()),
                 dispatch_id: request.dispatch_id.clone(),
                 agent_id: "child-1".into(),
             })
             .unwrap();
         let completion = NativeCompletion {
+            decision_digest: Some(request.decision.digest.clone()),
             dispatch_id: request.dispatch_id.clone(),
             agent_id: "child-1".into(),
             final_message:
@@ -248,6 +254,7 @@ async fn restart_requires_exact_stop_acknowledgment_before_recovery() {
     let request = dispatch(&broker).await;
     broker
         .register(&NativeRegistration {
+            decision_digest: Some(request.decision.digest.clone()),
             dispatch_id: request.dispatch_id.clone(),
             agent_id: "child-1".into(),
         })
@@ -296,6 +303,7 @@ async fn timing_immediate_completion_does_not_wait_for_the_hard_deadline() {
     assert_eq!(request.hard_timeout_secs, 180);
     broker
         .register(&NativeRegistration {
+            decision_digest: Some(request.decision.digest.clone()),
             dispatch_id: request.dispatch_id.clone(),
             agent_id: "fast-child".into(),
         })
@@ -303,7 +311,8 @@ async fn timing_immediate_completion_does_not_wait_for_the_hard_deadline() {
     let message = r#"{"facts":[]}"#;
     broker
         .complete(NativeCompletion {
-            dispatch_id: request.dispatch_id.clone(),
+            decision_digest: Some(request.decision.digest.clone()),
+dispatch_id: request.dispatch_id.clone(),
             agent_id: "fast-child".into(),
             final_message: serde_json::json!({"dispatch_id":request.dispatch_id,"result":serde_json::from_str::<serde_json::Value>(message).unwrap()}).to_string(),
             agent_stopped: true,
@@ -336,6 +345,7 @@ async fn timing_short_deadline_keeps_a_registered_child_behind_the_stop_barrier(
     let request = dispatch(&broker).await;
     broker
         .register(&NativeRegistration {
+            decision_digest: Some(request.decision.digest.clone()),
             dispatch_id: request.dispatch_id.clone(),
             agent_id: "slow-child".into(),
         })
@@ -432,6 +442,7 @@ async fn coordinator_is_limited_to_astra_planning_roles() {
     assert!(request.coordinator_allowed);
     broker
         .register(&NativeRegistration {
+            decision_digest: Some(request.decision.digest.clone()),
             dispatch_id: request.dispatch_id.clone(),
             agent_id: "coordinator".into(),
         })
@@ -442,6 +453,7 @@ async fn coordinator_is_limited_to_astra_planning_roles() {
     ] {
         assert!(broker
             .complete(NativeCompletion {
+                decision_digest: Some(request.decision.digest.clone()),
                 dispatch_id: request.dispatch_id.clone(),
                 agent_id: "coordinator".into(),
                 final_message: text,
@@ -455,6 +467,7 @@ async fn coordinator_is_limited_to_astra_planning_roles() {
     .to_string();
     broker
         .complete(NativeCompletion {
+            decision_digest: Some(request.decision.digest.clone()),
             dispatch_id: request.dispatch_id,
             agent_id: "coordinator".into(),
             final_message: envelope,
@@ -474,6 +487,7 @@ async fn coordinator_is_limited_to_astra_planning_roles() {
     assert!(!request.coordinator_allowed);
     assert!(broker
         .register(&NativeRegistration {
+            decision_digest: Some(request.decision.digest.clone()),
             dispatch_id: request.dispatch_id,
             agent_id: "coordinator".into()
         })
@@ -513,6 +527,7 @@ async fn host_dispatch(
 ) -> NativeDispatch {
     tokio::time::timeout(Duration::from_secs(5), async {
         loop {
+            common::fixture_assessments(&hwahap::state::Store::open(root).unwrap());
             let result = host
                 .advance(root, hwahap::native::NativeInput::default())
                 .await
@@ -559,6 +574,7 @@ async fn host_polling_preserves_one_dispatch_and_excludes_a_second_server() {
         temp.path(),
         NativeInput {
             registration: Some(NativeRegistration {
+                decision_digest: Some(request.decision.digest.clone()),
                 dispatch_id: request.dispatch_id.clone(),
                 agent_id: "native-1".into(),
             }),
@@ -613,6 +629,7 @@ async fn stop_ack_keeps_lock_and_pending_until_task_cancellation_finishes() {
         temp.path(),
         NativeInput {
             registration: Some(NativeRegistration {
+                decision_digest: Some(request.decision.digest.clone()),
                 dispatch_id: request.dispatch_id.clone(),
                 agent_id: "child-1".into(),
             }),
@@ -663,6 +680,7 @@ async fn host_consumes_registered_output_and_accepts_identical_replay() {
         temp.path(),
         NativeInput {
             registration: Some(NativeRegistration {
+                decision_digest: Some(request.decision.digest.clone()),
                 dispatch_id: request.dispatch_id.clone(),
                 agent_id: "native-1".into(),
             }),
@@ -671,7 +689,8 @@ async fn host_consumes_registered_output_and_accepts_identical_replay() {
     )
     .await
     .unwrap();
-    let completion = NativeCompletion { dispatch_id: request.dispatch_id.clone(), agent_id: "native-1".into(), final_message: serde_json::json!({"dispatch_id":request.dispatch_id,"result":serde_json::from_str::<serde_json::Value>(r#"{"facts":[{"id":"F1","question":"what exists?","answer":"README.md exists","sources":["README.md:1"]}]}"#).unwrap()}).to_string(), agent_stopped: true, reported_usage: None };
+    let completion = NativeCompletion { decision_digest: Some(request.decision.digest.clone()),
+dispatch_id: request.dispatch_id.clone(), agent_id: "native-1".into(), final_message: serde_json::json!({"dispatch_id":request.dispatch_id,"result":serde_json::from_str::<serde_json::Value>(r#"{"facts":[{"id":"F1","question":"what exists?","answer":"README.md exists","sources":["README.md:1"]}]}"#).unwrap()}).to_string(), agent_stopped: true, reported_usage: None };
     host.advance(
         temp.path(),
         NativeInput {
@@ -717,6 +736,7 @@ async fn native_fact_finder_ignores_runtime_writes_but_detects_user_file_changes
             temp.path(),
             NativeInput {
                 registration: Some(NativeRegistration {
+                    decision_digest: Some(request.decision.digest.clone()),
                     dispatch_id: request.dispatch_id.clone(),
                     agent_id: "reader".into(),
                 }),
@@ -732,13 +752,17 @@ async fn native_fact_finder_ignores_runtime_writes_but_detects_user_file_changes
         }
         let mut progress = host.advance(temp.path(), NativeInput {
             completion: Some(NativeCompletion {
-                dispatch_id: request.dispatch_id.clone(), agent_id: "reader".into(),
+                decision_digest: Some(request.decision.digest.clone()),
+dispatch_id: request.dispatch_id.clone(), agent_id: "reader".into(),
                 final_message: serde_json::json!({"dispatch_id":request.dispatch_id,"result":serde_json::from_str::<serde_json::Value>(r#"{"facts":[{"id":"F1","question":"what exists?","answer":"README.md","sources":["README.md:1"]}]}"#).unwrap()}).to_string(),
                 agent_stopped: true, reported_usage: None,
             }), ..Default::default()
         }).await.unwrap();
         tokio::time::timeout(Duration::from_secs(5), async {
             while progress.dispatch.is_none() && progress.outcome.next != "blocked" {
+                if progress.outcome.next == "delegation_wait" {
+                    common::fixture_assessments(&Store::open(temp.path()).unwrap());
+                }
                 tokio::task::yield_now().await;
                 progress = host
                     .advance(temp.path(), NativeInput::default())

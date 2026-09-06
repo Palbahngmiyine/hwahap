@@ -34,7 +34,20 @@ async fn three_occupied_child_slots_complete_three_hundred_jobs_without_replacem
         .step(Some("Inspect this repository"), None)
         .await
         .unwrap();
-    common::fixture_observation(
+    let store = Store::open(&fixture.repo).unwrap();
+    let mut plan = store.read_plan().unwrap().unwrap();
+    plan.units = (1..=100)
+        .map(|n| hwahap::plan::Unit {
+            id: format!("U{n}"),
+            title: "pool fixture".into(),
+            paths: vec![format!("output-{n}")],
+            acceptance_ids: vec![],
+            depends_on: vec![],
+            probe: false,
+        })
+        .collect();
+    store.write_plan(&plan).unwrap();
+    common::fixture_native_observation(
         &Store::open(&fixture.repo).unwrap(),
         "controlled-parent-task",
     );
@@ -69,6 +82,7 @@ async fn three_occupied_child_slots_complete_three_hundred_jobs_without_replacem
                     .with_host_session_id("controlled-parent-task".to_string()),
             );
             let spec = SessionSpec {
+                assessment: None,
                 cwd: fixture.repo.clone(),
                 role,
                 unit: Some(format!("U{unit}")),
@@ -109,6 +123,7 @@ async fn three_occupied_child_slots_complete_three_hundred_jobs_without_replacem
             };
             broker
                 .register(&NativeRegistration {
+                    decision_digest: Some(request.decision.digest.clone()),
                     dispatch_id: request.dispatch_id.clone(),
                     agent_id: agent_id.clone(),
                 })
@@ -118,6 +133,7 @@ async fn three_occupied_child_slots_complete_three_hundred_jobs_without_replacem
                 serde_json::json!({"dispatch_id":request.dispatch_id,"result":result}).to_string();
             broker
                 .complete(NativeCompletion {
+                    decision_digest: Some(request.decision.digest.clone()),
                     dispatch_id: request.dispatch_id,
                     agent_id,
                     final_message,
@@ -165,6 +181,7 @@ async fn start_job(fixture: &Fixture, role: Role) -> (Arc<NativeSessions>, Nativ
             .with_host_session_id("guard-parent-task".into()),
     );
     let spec = SessionSpec {
+        assessment: None,
         cwd: fixture.repo.clone(),
         role,
         unit: None,
@@ -178,6 +195,7 @@ async fn start_job(fixture: &Fixture, role: Role) -> (Arc<NativeSessions>, Nativ
 
 fn registration(request: &NativeDispatch, agent: &str) -> NativeRegistration {
     NativeRegistration {
+        decision_digest: Some(request.decision.digest.clone()),
         dispatch_id: request.dispatch_id.clone(),
         agent_id: agent.into(),
     }
@@ -185,6 +203,7 @@ fn registration(request: &NativeDispatch, agent: &str) -> NativeRegistration {
 
 fn completion(request: &NativeDispatch, agent: &str) -> NativeCompletion {
     NativeCompletion {
+        decision_digest: Some(request.decision.digest.clone()),
         dispatch_id: request.dispatch_id.clone(),
         agent_id: agent.into(),
         final_message:
@@ -212,7 +231,7 @@ async fn pool_fixture() -> Fixture {
         .step(Some("Inspect this repository"), None)
         .await
         .unwrap();
-    common::fixture_observation(&Store::open(&fixture.repo).unwrap(), "guard-parent-task");
+    common::fixture_native_observation(&Store::open(&fixture.repo).unwrap(), "guard-parent-task");
     fixture
 }
 
@@ -302,10 +321,20 @@ async fn pool_model_or_effort_changes_refuse_reuse_and_replacement() {
     let (broker, first, task) = start_job(&fixture, Role::FactFinder).await;
     finish_job(&broker, &first, task, "worker").await;
     let artifacts = Store::open(&fixture.repo).unwrap().artifacts_path();
-    let before = artifacts.read_dir().unwrap().count();
+    let before = artifacts
+        .read_dir()
+        .unwrap()
+        .filter(|e| {
+            !e.as_ref()
+                .unwrap()
+                .file_name()
+                .to_string_lossy()
+                .starts_with("delegation-")
+        })
+        .count();
     for (model, effort) in [("other-model", "medium"), ("gpt-5.6-luna", "high")] {
         let store = Store::open(&fixture.repo).unwrap();
-        let mut observed = common::fixture_observation(&store, "guard-parent-task");
+        let mut observed = common::fixture_native_observation(&store, "guard-parent-task");
         observed.models.remove("gpt-5.6-luna");
         observed.models.insert(
             model.into(),
@@ -324,6 +353,7 @@ async fn pool_model_or_effort_changes_refuse_reuse_and_replacement() {
         let broker = NativeSessions::new(Store::open(&fixture.repo).unwrap(), 1000, 30)
             .with_host_session_id("guard-parent-task".into());
         let spec = SessionSpec {
+            assessment: None,
             cwd: fixture.repo.clone(),
             role: Role::FactFinder,
             unit: None,
@@ -335,7 +365,19 @@ async fn pool_model_or_effort_changes_refuse_reuse_and_replacement() {
             .unwrap_err();
         assert!(error.to_string().contains("model_unavailable"), "{error}");
         assert!(broker.dispatch().unwrap().is_none());
-        assert_eq!(artifacts.read_dir().unwrap().count(), before);
+        assert_eq!(
+            artifacts
+                .read_dir()
+                .unwrap()
+                .filter(|e| !e
+                    .as_ref()
+                    .unwrap()
+                    .file_name()
+                    .to_string_lossy()
+                    .starts_with("delegation-"))
+                .count(),
+            before
+        );
     }
 }
 

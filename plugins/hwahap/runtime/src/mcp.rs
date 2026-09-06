@@ -102,6 +102,16 @@ spawn one child with task_name=hwahap_<dispatch_id>, fork_turns=none, requested 
 exact brief, then register its returned ID immediately. Never replace a retained child by spawning \
 another, change its model, or use it in another lane.
 
+For `delegation_wait`, read the reason and supply task_assessment with the current run_id, contract_digest, \
+unit, role, requirements, three risk ratings, topology and source evidence. A task profile is shared by \
+all roles for one unit, or by all run-level roles; role requirements are merged by the runtime. Put unit \
+profiles and an aggregate run profile in plan.task_profiles. Use the unit ID as writer_owner, or run_id \
+for aggregate writes, and exact approved write_paths. Refresh assessments after contract changes. \
+High-risk profiles include an authorized disposable checkout and failure/recovery test commands; the \
+runtime requests two independent preflight reviews and executes both checks before author dispatch. \
+Copy native_dispatch.decision.digest into decision_digest for both registration and completion. \
+Keep the offered identity, model, effort and lane throughout that dispatch.
+
 For `native_wait`, coordinator means perform the assigned work here, not wait for a child. \
 Otherwise use event-driven native waits of at most 30 seconds and check hwahap_step after a wait \
 expires; never sleep for 360 seconds or hold one blocking wait through the deadline. When the \
@@ -149,6 +159,9 @@ checks pass, and the final review is still fresh.";
 /// Arguments to `hwahap_step`.
 #[derive(Debug, Clone, Deserialize, JsonSchema)]
 pub struct StepArgs {
+    /// Parent assessment bound to the current task and contract.
+    #[serde(default)]
+    pub task_assessment: Option<crate::delegation::TaskAssessment>,
     /// End the named run, preserving its worktree and evidence.
     #[serde(default)]
     pub abandon: Option<crate::native::AbandonRequest>,
@@ -343,6 +356,7 @@ impl Hwahap {
                 &root,
                 NativeInput {
                     host_observation: args.host_observation,
+                    task_assessment: args.task_assessment,
                     verification_recovery: args.verification_recovery,
                     approved_plan: args.approved_plan,
                     question_response: args.question_response,

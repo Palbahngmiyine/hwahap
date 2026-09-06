@@ -446,6 +446,7 @@ pub struct Frozen {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Plan {
+    pub task_profiles: std::collections::BTreeMap<String, crate::delegation::TaskProfile>,
     pub schema: String,
     /// An explicitly approved Codex plan, distinct from interview answers and typed confirmation.
     #[serde(deserialize_with = "crate::required_option")]
@@ -516,6 +517,7 @@ impl Plan {
         statement: impl Into<String>,
     ) -> Self {
         Plan {
+            task_profiles: Default::default(),
             schema: SCHEMA.to_string(),
             approved_plan: None,
             execution_branch: None,
@@ -669,6 +671,7 @@ impl Plan {
 
         Digest::of(&serde_json::json!({
             "unit": unit,
+            "task_profile": self.task_profiles.get(unit_id),
             "acceptance": acceptance,
             "requirements": requirements,
             "decisions": decisions,

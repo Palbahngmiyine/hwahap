@@ -46,7 +46,7 @@ async fn build_parent_is_sealed_before_first_poll_and_after_restart() {
         .unwrap();
     assert_eq!(started.outcome.state, "coding");
     let store = Store::open(&root).unwrap();
-    common::fixture_observation(&store, "actual-build-authorizer");
+    common::fixture_native_observation(&store, "actual-build-authorizer");
     assert!(store.artifacts_path().join("native-owner.json").exists());
     // Simulate failure after the BUILD transaction, before its derived owner file was saved.
     std::fs::remove_file(store.artifacts_path().join("native-owner.json")).unwrap();

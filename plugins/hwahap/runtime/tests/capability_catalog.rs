@@ -174,11 +174,13 @@ async fn native_dispatch_uses_catalog_and_keeps_bound_worker() {
         .engine()
         .start_planning("Inspect repository", true)
         .unwrap();
+    common::fixture_assessments(&store);
     let observed = catalog_observation(&catalog, "parent", 1);
     host::observe(&store, &SystemClock, "parent", &observed).unwrap();
     let broker =
         Arc::new(NativeSessions::new(store.clone(), 10, 30).with_host_session_id("parent".into()));
     let spec = SessionSpec {
+        assessment: None,
         cwd: fixture.repo.clone(),
         role: Role::FactFinder,
         unit: None,
@@ -202,12 +204,14 @@ async fn native_dispatch_uses_catalog_and_keeps_bound_worker() {
         assert_eq!(dispatch.reuse_agent_id.is_some(), index == 1);
         broker
             .register(&NativeRegistration {
+                decision_digest: Some(dispatch.decision.digest.clone()),
                 dispatch_id: dispatch.dispatch_id.clone(),
                 agent_id: "worker-a".into(),
             })
             .unwrap();
         broker
             .complete(NativeCompletion {
+                decision_digest: Some(dispatch.decision.digest.clone()),
                 dispatch_id: dispatch.dispatch_id.clone(),
                 agent_id: "worker-a".into(),
                 agent_stopped: true,
@@ -252,6 +256,7 @@ async fn host_metadata_accompanies_actions_and_stale_updates_preserve_completion
     )
     .await
     .unwrap();
+    common::fixture_assessments(&Store::open(&fixture.repo).unwrap());
     let request = tokio::time::timeout(std::time::Duration::from_secs(5), async {
         loop {
             let result = host
@@ -277,6 +282,7 @@ async fn host_metadata_accompanies_actions_and_stale_updates_preserve_completion
         NativeInput {
             host_session_id: Some("parent".into()),
             registration: Some(NativeRegistration {
+                decision_digest: Some(request.decision.digest.clone()),
                 dispatch_id: request.dispatch_id.clone(),
                 agent_id: "worker".into(),
             }),
@@ -285,7 +291,8 @@ async fn host_metadata_accompanies_actions_and_stale_updates_preserve_completion
     )
     .await
     .unwrap();
-    let completion = NativeCompletion { dispatch_id:request.dispatch_id.clone(),agent_id:"worker".into(),agent_stopped:true,reported_usage:None,
+    let completion = NativeCompletion { decision_digest: Some(request.decision.digest.clone()),
+dispatch_id:request.dispatch_id.clone(),agent_id:"worker".into(),agent_stopped:true,reported_usage:None,
         final_message:serde_json::json!({"dispatch_id":request.dispatch_id,"result":{"facts":[{"id":"F1","question":"source","answer":"seed file","sources":["src/existing.txt:1"]}]}}).to_string() };
     let mut stale = observed;
     stale.observed_at = "2000-01-01T00:00:00Z".into();
@@ -454,7 +461,7 @@ async fn abandon_waits_for_registered_worker_stop_and_replays_acknowledgment() {
     let mut run = store.read_run().unwrap().unwrap();
     run.plan_digest = Some(store.read_plan().unwrap().unwrap().digest().unwrap());
     store.write_run(&SystemClock, &run).unwrap();
-    common::fixture_observation(&store, &run.run_id);
+    common::fixture_native_observation(&store, &run.run_id);
     let host = NativeHost::default();
     let dispatch = tokio::time::timeout(std::time::Duration::from_secs(5), async {
         loop {
@@ -474,6 +481,7 @@ async fn abandon_waits_for_registered_worker_stop_and_replays_acknowledgment() {
         &fixture.repo,
         NativeInput {
             registration: Some(NativeRegistration {
+                decision_digest: Some(dispatch.decision.digest.clone()),
                 dispatch_id: dispatch.dispatch_id.clone(),
                 agent_id: "worker".into(),
             }),
@@ -555,7 +563,7 @@ async fn unfrozen_plan_abandons_with_current_plan_digest_after_capacity_refusal(
         .digest()
         .unwrap()
         .to_string();
-    let mut observed = common::fixture_observation(&store, parent);
+    let mut observed = common::fixture_native_observation(&store, parent);
     observed.available_slots = 0;
     hwahap::catalog::host::observe(&store, &SystemClock, parent, &observed).unwrap();
     let error = tokio::time::timeout(std::time::Duration::from_secs(5), async {
@@ -570,7 +578,10 @@ async fn unfrozen_plan_abandons_with_current_plan_digest_after_capacity_refusal(
                 )
                 .await
             {
-                Err(error) => break error,
+                Err(error) => panic!("unexpected error: {error}"),
+                Ok(result) if result.outcome.next == "delegation_wait" => {
+                    break result.outcome.message
+                }
                 Ok(_) => tokio::task::yield_now().await,
             }
         }

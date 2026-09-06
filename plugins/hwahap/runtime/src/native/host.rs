@@ -16,6 +16,7 @@ use crate::state::Store;
 
 #[derive(Default)]
 pub struct NativeInput {
+    pub task_assessment: Option<crate::delegation::TaskAssessment>,
     pub abandon: Option<super::AbandonRequest>,
     pub host_observation: Option<crate::catalog::HostObservation>,
     pub verification_recovery: Option<crate::verification::Recovery>,
@@ -209,6 +210,15 @@ impl NativeHost {
                 let _lock = RepoLock::acquire(root)?;
                 return super::abandon::finish(&store, &request);
             }
+        }
+        if let Some(assessment) = &input.task_assessment {
+            if active.contains_key(root) {
+                return Err(Error::Rejected(
+                    "finish active native work before recording another task assessment".into(),
+                ));
+            }
+            let _lock = RepoLock::acquire(root)?;
+            crate::delegation::store::record(&store, assessment)?;
         }
         let observed = input.host_observation.clone();
         let observing_parent = input.host_session_id.as_deref();
@@ -535,8 +545,17 @@ impl NativeHost {
                 );
             }
             running.broker.finish()?;
+            let outcome = match result {
+                Err(Error::DelegationWait(message)) => {
+                    let mut outcome = Engine::open(root)?.status()?;
+                    outcome.next = "delegation_wait".into();
+                    outcome.message = message;
+                    outcome
+                }
+                other => other?,
+            };
             return Ok(NativeProgress {
-                outcome: result?,
+                outcome,
                 dispatch: None,
             });
         }
