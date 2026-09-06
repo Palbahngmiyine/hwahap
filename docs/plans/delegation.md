@@ -1,6 +1,6 @@
 # 작업 분해와 위임 개선
 
-상태: 구현 설계. 질문 UI 개선 커밋 `ecfaac6` 이후 적용할 7개 작업이다.
+상태: 작업 명세 작성 완료. [구현 파일·입출력 계약·테스트·인계 조건](delegation-work-items.md)을 기준으로 착수한다.
 모델 카탈로그 변경은 새 실행부터 적용한다. 진행 중 실행은 기록된 모델·effort·역할을 유지하고, 제공 중단 시 복구 대기한다.
 
 | 작업 | 완료 결과 | 핵심 검증 | 선행 작업 |
@@ -29,7 +29,7 @@
 <summary>U2 · 검토 지적의 분류와 구조 수정</summary>
 
 - 검토자는 지적마다 `id`, `kind`, 대상, 근거, 기대 결과를 기록한다. 종류는 `choice`, `fact`, `structure`, `blocker`이며 부모가 경로를 제안하고 런타임이 계약 변경을 검사한다.
-- 혼합 지적은 하위 지적으로 나눠 원래 ID와 연결한다. 사실 보완 → 사용자 선택 → 구조 수정 → 독립 재검토 순서로 의존성을 해결한다. blocker가 남으면 승인을 기다린다.
+- 혼합 지적은 하위 지적으로 나눠 원래 ID와 연결한다. 사실 보완 → 사용자 선택 → 구조 수정 → 독립 재검토 순서로 의존성을 해결한다. blocker는 필요한 근거·권한이 확보될 때까지 대기한다.
 - 구조 수정은 승인 전 unit·테스트 연결·의존성·경로 배치를 다룬다. 사용자 선택의 의미·acceptance·명령·권한 변화는 계약 변경 경로로 보낸다. 승인된 계약의 변경도 기존 승인 절차를 따른다.
 - 분할·병합 후보와 이유는 `review_digest`에 결속된 검토 증거로 저장한다. 이유만 바뀌면 unit fingerprint는 유지한다. 계약 요소 변화는 검토를 갱신한다.
 - 구조 수정 예산은 run 전체 3회다. 재분할과 프로세스 재시작에도 누적하고, 미해결 지적은 다음 검토까지 보존한다. 한 결과·불변조건을 보존하는 여러 파일의 변경은 유효한 unit이다.
@@ -45,7 +45,7 @@
 - fingerprint는 기존 unit·acceptance·requirement·선택 의미·테스트 명령을 포함한다. 테스트 코드 변경은 HEAD/tree 비교로 판별한다. 경로·의존성·실행 환경 정책 변경도 계약 비교에 포함한다.
 - 순서: 실행 의도를 journal에 기록 → 명령 실행 → 출력 파일 저장 → 완료 이벤트 기록 → snapshot 반영. journal을 권위로 삼고 뒤처진 snapshot은 재구성한다.
 - 완료 이벤트 전 중단은 결과 미확정으로 복구하고 소유 프로세스 종료 확인 후 재검증한다. 완료 이벤트 후 중단은 출력 해시까지 검증해 재구성한다. snapshot 선행·출력 유실·충돌 completion은 복구 대기다.
-- 성공은 종료 코드 0과 실행 전후 동일 HEAD/tree·계약·테스트 입력이 모두 필요하다. 추적 파일과 승인된 입력을 감시하고, Git이 무시하는 빌드 산출물은 증거 입력에서 구분한다.
+- 성공은 종료 코드 0과 실행 전후 동일 코드·계약·테스트 입력이 모두 필요하다. 커밋 전에는 base HEAD·fingerprint·예정 tree, 완료 시에는 실제 commit tree에 결속한다. ignored 테스트 입력은 선언 목록으로 해시를 기록하고 빌드 산출물과 구분한다.
 - 마지막 후보에서 모든 비-probe unit의 고정 테스트와 full_suite를 실행한다. 각 결과를 같은 후보에 결속한 뒤 PR 검토와 SHIP에서 검사한다.
 - 저장 schema는 `hwahap/v5`로 올린다. v4 active run은 변경 전에 버전 불일치를 반환하고 원본을 보존한다. 기존 실행은 0.1.0으로 처리하고 새 schema는 새 실행에 사용한다.
 - 수정: `state.rs`, `engine.rs`, 검증 실행·PR/SHIP 모듈. 검증: `verification_evidence`의 T11–T14, T16–T17.
@@ -59,7 +59,7 @@
 - ADJUST의 명시된 unit ID는 직접 수정 대상이다. 확정 PR 지적은 파일을 소유하는 모든 unit에 연결한다. 연결 결과가 비거나 불명확하면 영향 검토로 대상을 확정한다.
 - 직접 대상과 의존성으로 무효화된 작업을 별도 기록한다. 직접 대상·새 작업·계약 변경 작업은 구현 경로, 나머지 자격 충족 작업은 재검증 경로로 보낸다.
 - 재검증은 구현 dispatch와 커밋 없이 고정 테스트를 실행한다. 실패·timeout·입력 변화는 실패 기록과 기존 시도 예산을 유지한다.
-- 공유 상태 또는 중간 이상 위험의 작업은 Critic의 현재 후보에 결속된 영향 검토를 추가한다. 단일 작업 내부·낮은 위험은 고정 테스트 결과로 판정한다.
+- U4에서는 재검증마다 Critic의 현재 후보에 결속된 영향 검토를 적용한다. U6에서 단일 작업 내부·낮은 위험으로 확인된 경우 고정 테스트 결과로 판정하는 경로를 추가한다.
 - 수정: `engine.rs`, `engine/adjust_build.rs`, PR repair, `state.rs`. 검증: `unit_revalidation`의 T09–T12, T15.
 
 </details>
@@ -68,12 +68,12 @@
 <summary>U5 · 교체 가능한 카탈로그와 호스트 관찰</summary>
 
 - 설정: `.hwahap/config.toml`의 `catalog_path`가 가리키는 JSON. 기본 경로는 `.hwahap/model-catalog.json`이다. 번들 기본 카탈로그는 모델별 선언 출처를 가진 시작 설정이다.
-- 카탈로그 필드: `schema`, `revision`, `models`. 모델별로 `id`, 역량별 수준 0–3, `efforts`(이름·지원 depth·선호 순서), 모델 선호 순서, 근거 출처를 요구한다.
+- 카탈로그 필드: `schema`, `revision`, `models`, `role_requirements`. 모델별로 `id`, 역량별 수준 0–3, `efforts`(이름·지원 depth·선호 순서), 모델 선호 순서, 근거 출처를 요구한다.
 - 역량 키는 `repository_analysis`, `implementation`, `cross_module_reasoning`, `adversarial_review`, `security_review`다. 0은 미확인, 1은 제한된 작업, 2는 통합 작업, 3은 복잡한 교차 영역 작업의 선언 수준이다.
 - 호스트는 `hwahap_step.host_observation`으로 `host_session_id`, `observed_at`, 출처, 모델별 지원 effort·도구, 부모 모델·effort, 생성 가능한 slot 수를 전달한다. 사용자 설정과 호스트 관찰을 별도로 기록한다.
 - 관찰은 dispatch 전 300초 이내여야 한다. 누락·만료·미확인 역량·선언과 가용성 충돌 시 이유를 표시하고 복구 대기한다. 실제 spawn 실패는 기존 stop/recovery 절차를 따른다.
 - run 시작 때 카탈로그 내용·revision·해시를 snapshot에 고정한다. 이후에는 가용성 관찰만 갱신한다. 변경된 설정은 다음 run에 적용한다.
-- pool은 run과 부모 작업에 결속한다. 새 run은 새 배정을 사용하고, 이전 run의 작업자는 종료 확인 후 정리한다. 진행 중 lane은 같은 identity·모델·effort·역할로 재사용한다.
+- pool은 run과 부모 작업에 결속한다. 이전 작업자의 작업 종료와 slot 해제는 별도로 확인한다. 새 run은 가용 slot에서 새 배정을 사용하고, 진행 중 lane은 같은 identity·모델·effort·역할로 재사용한다.
 - 영구 제공 종료: `hwahap_step.abandon`에 run ID와 사용자 종료 지시를 받는다. pending 작업의 종료 확인 후 기록·출력·pool 결속을 archive하고 종료한다. 새 request는 새 카탈로그와 새 승인 기록으로 시작한다.
 - 기존 `profiles` 설정은 구체적인 새 카탈로그 변환 안내를 반환한다. 기존 schema의 실행과 새 schema의 실행은 각각 대응 런타임으로 처리한다.
 - 수정: `config.rs`, `profile.rs`, `native.rs`, `native/pool.rs`, `native/host.rs`, `mcp.rs`, `state.rs`. 검증: `capability_catalog`의 카탈로그 교체·호스트 만료·중복 종료·종료 중 중단 복구.
