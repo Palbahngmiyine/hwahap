@@ -6,6 +6,7 @@ struct PreparedRepair {
     base: String,
     tree: String,
     commit: String,
+    attempts: Vec<crate::revalidation::UnitAttempt>,
 }
 
 impl Engine {
@@ -34,6 +35,8 @@ impl Engine {
                 "repair requires confirmed findings without unresolved claims".into(),
             ));
         }
+        self.record_pr_obligations(&run, &plan, &p, &findings, sessions)
+            .await?;
         let worktree = self.store.worktree_path();
         let paths: Vec<String> = plan
             .units
@@ -92,9 +95,36 @@ impl Engine {
                     prompts::implementer(&plan, &unit, &details),
                     serde_json::to_string(&commands).expect("command serialization")
                 );
+                let mut attempts = Vec::new();
+                for target in plan.units.iter().filter(|u| !u.probe) {
+                    if crate::revalidation::obligations(&self.store, &run.run_id, &target.id)?
+                        .iter()
+                        .any(|o| o.evidence_kind == "pr_finding")
+                    {
+                        let round = Digest::of(&(&p.binding, "pr_repair", &target.id))?;
+                        attempts.push(crate::revalidation::reserve_attempt(
+                            &self.store,
+                            &*self.clock,
+                            &run.run_id,
+                            &target.id,
+                            crate::revalidation::AttemptKind::Implementation,
+                            &round,
+                            self.config.native_max_calls,
+                        )?);
+                    }
+                }
                 let outcome = self.ask(sessions, Role::Rework, None, prompt).await?;
                 let result = WorkerResult::parse(&outcome.final_message)?;
                 if result.status != WorkerStatus::Completed {
+                    for attempt in &attempts {
+                        crate::revalidation::finish_attempt(
+                            &self.store,
+                            &*self.clock,
+                            attempt,
+                            false,
+                            serde_json::json!({"worker":result}),
+                        )?;
+                    }
                     return Err(Error::BoundaryViolation(format!(
                         "PR repair incomplete: {}",
                         result.summary
@@ -135,6 +165,15 @@ impl Engine {
                             &serde_json::json!({"binding":p.binding,"attempt":p.repairs,
                                 "command":command,"output":check.combined,"patch":patch}),
                         )?;
+                        for attempt in &attempts {
+                            crate::revalidation::finish_attempt(
+                                &self.store,
+                                &*self.clock,
+                                attempt,
+                                false,
+                                serde_json::json!({"command":command,"output":check.combined}),
+                            )?;
+                        }
                         // Only discard this owned attempt after durable reproduction evidence exists.
                         self.git.reset_preserving_inputs(
                             &worktree,
@@ -159,6 +198,7 @@ impl Engine {
                     base: p.binding.head.clone(),
                     tree,
                     commit,
+                    attempts,
                 };
                 save_evidence(&self.store, &key, &prepared)?;
                 prepared
@@ -216,13 +256,7 @@ impl Engine {
                 "repair publication lost its clean branch or matching draft".into(),
             ));
         }
-        let final_checks = self.run_final_verification(&plan, &worktree).await?;
-        if !final_checks.success {
-            return Err(Error::Rejected(format!(
-                "repaired candidate verification failed: {}",
-                final_checks.combined
-            )));
-        }
+        self.verify_prepared_pr_repair(&plan, &prepared).await?;
         let remote = self.forge.head_sha(&worktree, &p.binding.pr_url)?;
         if remote != prepared.base && remote != prepared.commit {
             return Err(Error::BoundaryViolation(
@@ -255,5 +289,106 @@ impl Engine {
         p.save(&self.store)?;
         self.refresh_review_report(&run, &plan, &p)?;
         Ok(self.report(&run, "Verified repair published to the same draft; both Astra teams must review the new commit.".into()))
+    }
+}
+
+impl Engine {
+    fn finish_prepared_attempts(
+        &self,
+        attempts: &[crate::revalidation::UnitAttempt],
+        passed: bool,
+        evidence: &serde_json::Value,
+    ) -> Result<()> {
+        let events = self.store.read_events()?;
+        for attempt in attempts {
+            if !events.iter().any(|e| {
+                e.kind == "unit_attempt_finished" && e.data["id"] == serde_json::json!(attempt.id)
+            }) {
+                crate::revalidation::finish_attempt(
+                    &self.store,
+                    &*self.clock,
+                    attempt,
+                    passed,
+                    evidence.clone(),
+                )?;
+            }
+        }
+        Ok(())
+    }
+
+    async fn verify_prepared_pr_repair(
+        &self,
+        plan: &Plan,
+        prepared: &PreparedRepair,
+    ) -> Result<()> {
+        use crate::revalidation::{AttemptKind, UnitAttempt};
+        let run = self
+            .store
+            .read_run()?
+            .ok_or_else(|| Error::Corrupt("missing run".into()))?;
+        let worktree = self.store.worktree_path();
+        let round = Digest::of(&(
+            &prepared.commit,
+            plan.digest()?,
+            "pr_postcommit",
+            crate::verification::inputs::digest(&worktree, &plan.verification_inputs)?,
+        ))?;
+        let evidence = serde_json::json!({"commit":prepared.commit,"verification_round":round});
+        // A lost return after final verification is reconciled from current command evidence.
+        // The prepared writer attempt retains its first completed outcome across later retries.
+        match self.require_current_verifications(plan) {
+            Ok(()) => {
+                let attempts: Vec<UnitAttempt> = self
+                    .store
+                    .read_events()?
+                    .into_iter()
+                    .filter(|e| {
+                        e.kind == "unit_attempt_started"
+                            && e.data["run_id"] == run.run_id
+                            && e.data["kind"] == "revalidation"
+                            && e.data["round"] == serde_json::json!(round)
+                    })
+                    .map(|e| {
+                        serde_json::from_value(e.data).map_err(|e| Error::Corrupt(e.to_string()))
+                    })
+                    .collect::<Result<_>>()?;
+                self.finish_prepared_attempts(&attempts, true, &evidence)?;
+                return self.finish_prepared_attempts(&prepared.attempts, true, &evidence);
+            }
+            Err(Error::Rejected(_)) => {}
+            Err(error) => return Err(error),
+        }
+        let mut attempts = Vec::new();
+        for unit in plan.units.iter().filter(|u| !u.probe) {
+            attempts.push(crate::revalidation::reserve_attempt(
+                &self.store,
+                &*self.clock,
+                &run.run_id,
+                &unit.id,
+                AttemptKind::Revalidation,
+                &round,
+                self.config.native_max_calls,
+            )?);
+        }
+        let checks = self.run_final_verification(plan, &worktree).await;
+        let passed = checks.as_ref().is_ok_and(|output| output.success);
+        let detail = match &checks {
+            Ok(output) => {
+                serde_json::json!({"commit":prepared.commit,"verification_round":round,"output":output.combined})
+            }
+            Err(error) => {
+                serde_json::json!({"commit":prepared.commit,"verification_round":round,"error":error.to_string()})
+            }
+        };
+        self.finish_prepared_attempts(&attempts, passed, &detail)?;
+        self.finish_prepared_attempts(&prepared.attempts, passed, &detail)?;
+        let checks = checks?;
+        if !checks.success {
+            return Err(Error::Rejected(format!(
+                "repaired candidate verification failed: {}",
+                checks.combined
+            )));
+        }
+        Ok(())
     }
 }

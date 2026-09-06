@@ -26,6 +26,7 @@ pub mod profile;
 pub mod prompts;
 pub mod proposal;
 pub mod render;
+pub mod revalidation;
 pub mod session;
 pub mod state;
 pub mod validate;

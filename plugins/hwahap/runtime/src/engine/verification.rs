@@ -2,7 +2,7 @@ use super::*;
 use crate::verification::{self, Kind, Status, VerificationRequest};
 
 impl Engine {
-    fn verification_request(
+    pub(super) fn verification_request(
         &self,
         plan: &Plan,
         unit: Option<&str>,
@@ -155,13 +155,13 @@ impl Engine {
         Ok(())
     }
 
-    pub(super) fn bind_verified_implementation(
+    pub(super) fn verified_implementation_record(
         &self,
         plan: &Plan,
         unit: &Unit,
         cwd: &Path,
         commit: &str,
-    ) -> Result<()> {
+    ) -> Result<crate::revalidation::ImplementationRecord> {
         let records = verification::recover_verifications(&self.store)?;
         let tree = self
             .git
@@ -195,10 +195,34 @@ impl Engine {
             }
             evidence.push(record.id.clone());
         }
-        self.store.append_event(&*self.clock, "implementation_completed", serde_json::json!({
-            "run_id":run.run_id,"unit_id":unit.id,"fingerprint":plan.unit_fingerprint(&unit.id)?,
-            "commit":commit,"tree":tree,"verification_ids":evidence
-        }))?;
-        Ok(())
+        let implementation = crate::revalidation::ImplementationRecord {
+            run_id: run.run_id,
+            unit_id: unit.id.clone(),
+            fingerprint: plan.unit_fingerprint(&unit.id)?,
+            commit: commit.into(),
+            tree,
+            verification_ids: evidence,
+        };
+        Ok(implementation)
+    }
+
+    pub(super) fn bind_verified_implementation(
+        &self,
+        plan: &Plan,
+        unit: &Unit,
+        cwd: &Path,
+        commit: &str,
+    ) -> Result<()> {
+        let implementation = self.verified_implementation_record(plan, unit, cwd, commit)?;
+        if !crate::revalidation::implementations(&self.store, &implementation.run_id)?
+            .contains(&implementation)
+        {
+            self.store.append_event(
+                &*self.clock,
+                "implementation_completed",
+                serde_json::json!(implementation),
+            )?;
+        }
+        self.resolve_implementation_obligations(&implementation)
     }
 }

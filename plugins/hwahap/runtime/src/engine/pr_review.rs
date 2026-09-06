@@ -3,6 +3,7 @@ use crate::pr_review::{
     read_evidence, save_evidence, AttackReport, DefenseReport, ReviewProgress, ReviewStage,
 };
 use crate::session::SessionReceipt;
+mod obligations;
 mod repair;
 
 #[derive(serde::Serialize, serde::Deserialize)]
@@ -203,6 +204,7 @@ impl Engine {
         } else if !defense.report.repair_findings(&attack.report).is_empty() {
             progress.stage = ReviewStage::Repair;
         } else {
+            self.resolve_pr_obligations(&run, &plan, &progress)?;
             progress.stage = ReviewStage::Complete;
             run.reviewed_head = Some(progress.binding.head.clone());
             run.state = RunState::AwaitingAdjustOrShip {

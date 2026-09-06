@@ -65,7 +65,7 @@ fn implementation(value: &str) -> Script {
 }
 
 #[tokio::test]
-async fn correction_preserves_contract_rebuilds_dependents_and_reviews_same_pr() {
+async fn correction_preserves_contract_revalidates_dependents_and_reviews_same_pr() {
     let f = reviewed().await;
     let engine = f.engine();
     let store = Store::open(&f.repo).unwrap();
@@ -85,7 +85,19 @@ async fn correction_preserves_contract_rebuilds_dependents_and_reviews_same_pr()
     assert!(engine
         .ship(&format!("SHIP {}", plan.challenge().unwrap()))
         .is_err());
-    let script = implementation("corrected");
+    let script = Script::new(vec![
+        step(
+            Role::Implementer,
+            Reply::write(
+                &[("one", "corrected")],
+                r#"{"status":"completed","summary":"corrected one"}"#,
+            ),
+        ),
+        step(Role::UnitReviewer, Reply::say(r#"{"verdict":"pass"}"#)),
+        step(Role::UnitReviewer, Reply::say(r#"{"verdict":"pass"}"#)),
+        step(Role::UnitReviewer, Reply::PrAttack),
+        step(Role::FinalReview, Reply::pr_defense()),
+    ]);
     engine.step_with(&script, None, None).await.unwrap();
     assert!(script
         .prompts_for(Role::Implementer)

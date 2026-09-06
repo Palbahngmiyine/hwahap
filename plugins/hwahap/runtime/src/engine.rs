@@ -37,10 +37,12 @@ mod adjust_build;
 mod approved_plan;
 mod build;
 mod grounding;
+mod implementation_commit;
 mod interview;
 mod lifecycle;
 mod planning;
 mod pr_review;
+mod revalidation;
 mod verification;
 pub use adjust_build::AdjustBuildRequest;
 pub use build::{BuildRequest, BuildUnit};
@@ -912,7 +914,20 @@ impl Engine {
             let unit = plan
                 .unit(unit_id)
                 .ok_or_else(|| Error::Internal(format!("unit {unit_id} vanished from the plan")))?;
-            match self.build_unit(&plan, unit, &worktree, sessions).await? {
+            let recovered = self.recover_prepared_implementation(&plan, unit)?;
+            let prior = self.prior_implementation(&plan, unit)?;
+            if let Some(record) = &prior {
+                self.resolve_implementation_obligations(record)?;
+            }
+            let direct = crate::revalidation::obligations(&self.store, &run.run_id, unit_id)?;
+            let outcome = if recovered {
+                UnitOutcome::Accepted
+            } else if let Some(record) = prior.filter(|_| direct.is_empty()) {
+                self.revalidate_unit(&plan, unit, &record, sessions).await?
+            } else {
+                self.build_unit(&plan, unit, &worktree, sessions).await?
+            };
+            match outcome {
                 UnitOutcome::Accepted => {
                     run.accepted_fingerprints
                         .insert(unit_id.clone(), plan.unit_fingerprint(unit_id)?);
@@ -972,7 +987,36 @@ impl Engine {
         let adjustment_findings = self.build_adjustment_findings(plan, unit)?;
         let mut findings = adjustment_findings.clone();
 
-        for attempt in 1..=MAX_ATTEMPTS {
+        let run_id = self
+            .store
+            .read_run()?
+            .ok_or_else(|| Error::Corrupt("missing run".into()))?
+            .run_id;
+        let round = Digest::of(&(
+            &checkpoint,
+            plan.unit_fingerprint(&unit.id)?,
+            &adjustment_findings,
+        ))?;
+        for _ in 0..MAX_ATTEMPTS {
+            let reservation = match crate::revalidation::reserve_attempt(
+                &self.store,
+                &*self.clock,
+                &run_id,
+                &unit.id,
+                crate::revalidation::AttemptKind::Implementation,
+                &round,
+                self.config.native_max_calls,
+            ) {
+                Ok(attempt) => attempt,
+                Err(Error::ExecutionLimit(reason)) => return Ok(UnitOutcome::Blocked(reason)),
+                Err(error) => return Err(error),
+            };
+            let attempt = reservation.ordinal;
+            if let Some(previous) =
+                crate::revalidation::previous_findings(&self.store, &reservation)?
+            {
+                findings = previous;
+            }
             self.git
                 .reset_preserving_inputs(worktree, &checkpoint, &plan.verification_inputs)?;
             let role = if attempt == 1 {
@@ -989,7 +1033,7 @@ impl Engine {
                 )
                 .await?;
             self.store.write_artifact(
-                &format!("{}-attempt-{attempt}.md", unit.id),
+                &format!("{}-attempt-{}.md", unit.id, reservation.total),
                 &outcome.transcript,
             )?;
 
@@ -1018,9 +1062,15 @@ impl Engine {
                              must leave the working tree untouched"
                         )]);
                         } else {
-                            return Ok(UnitOutcome::Conflict(
-                                result.conflict.unwrap_or(result.summary),
-                            ));
+                            let detail = result.conflict.unwrap_or(result.summary);
+                            crate::revalidation::finish_attempt(
+                                &self.store,
+                                &*self.clock,
+                                &reservation,
+                                false,
+                                serde_json::json!({"conflict":detail}),
+                            )?;
+                            return Ok(UnitOutcome::Conflict(detail));
                         }
                     }
                     WorkerStatus::Failed => {
@@ -1038,19 +1088,24 @@ impl Engine {
                                         &checkpoint,
                                         &plan.verification_inputs,
                                     )?;
+                                    crate::revalidation::finish_attempt(
+                                        &self.store,
+                                        &*self.clock,
+                                        &reservation,
+                                        true,
+                                        serde_json::json!({"probe":unit.id}),
+                                    )?;
                                     return Ok(UnitOutcome::Accepted);
                                 }
-                                let sha = self.git.commit_all(
-                                    worktree,
-                                    &format!(
-                                        "hwahap({}): {}\n\nplan-digest: {}\nunit: {}",
-                                        unit.id,
-                                        unit.title,
-                                        plan.digest()?,
-                                        unit.id
-                                    ),
+                                let sha =
+                                    self.commit_verified_implementation(plan, unit, worktree)?;
+                                crate::revalidation::finish_attempt(
+                                    &self.store,
+                                    &*self.clock,
+                                    &reservation,
+                                    true,
+                                    serde_json::json!({"commit":sha}),
                                 )?;
-                                self.bind_verified_implementation(plan, unit, worktree, &sha)?;
                                 return Ok(UnitOutcome::Accepted);
                             }
                             Err(reasons) => rejected = Some(reasons),
@@ -1064,6 +1119,13 @@ impl Engine {
                 .cloned()
                 .chain(rejected.unwrap_or_default())
                 .collect();
+            crate::revalidation::finish_attempt(
+                &self.store,
+                &*self.clock,
+                &reservation,
+                false,
+                serde_json::json!({"findings":findings}),
+            )?;
         }
 
         self.git

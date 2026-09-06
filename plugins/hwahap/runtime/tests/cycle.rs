@@ -1566,7 +1566,7 @@ async fn frozen_plan_tampering_is_refused_before_ship() {
 }
 
 #[tokio::test]
-async fn changing_an_accepted_unit_rebuilds_its_unchanged_dependents() {
+async fn changing_an_accepted_contract_rebuilds_it_and_revalidates_unchanged_dependents() {
     let fixture = Fixture::new();
     let script = Script::new(happy_path_steps());
     run_to_draft_pr(&fixture, &script).await;
@@ -1589,10 +1589,6 @@ async fn changing_an_accepted_unit_rebuilds_its_unchanged_dependents() {
             Reply::write(&[("src/added.txt", "revised\n")], DONE),
         ),
         step(Role::UnitReviewer, Reply::say(PASS)),
-        step(
-            Role::Implementer,
-            Reply::write(&[("docs/added.md", "# revised\n")], DONE),
-        ),
         step(Role::UnitReviewer, Reply::say(PASS)),
         step(Role::UnitReviewer, Reply::PrAttack),
         step(Role::FinalReview, Reply::pr_defense()),
@@ -1653,14 +1649,14 @@ async fn changing_an_accepted_unit_rebuilds_its_unchanged_dependents() {
     );
     assert_eq!(
         git(&fixture.worktree(), &["show", "HEAD:docs/added.md"]),
-        "# revised"
+        "# added"
     );
     assert_eq!(
         git(
             &fixture.worktree(),
             &["rev-list", "--count", &format!("{old_head}..HEAD")]
         ),
-        "2"
+        "1"
     );
     assert_eq!(
         script
@@ -1669,7 +1665,7 @@ async fn changing_an_accepted_unit_rebuilds_its_unchanged_dependents() {
             .filter(|c| c.role == Role::Implementer)
             .map(|c| c.unit.clone().unwrap())
             .collect::<Vec<_>>(),
-        vec!["U1", "U2", "U1", "U2"]
+        vec!["U1", "U2", "U1"]
     );
     assert_eq!(script.remaining(), 0);
 }

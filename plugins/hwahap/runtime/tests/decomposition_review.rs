@@ -1,3 +1,5 @@
+#![cfg(unix)]
+
 use hwahap::planning_review::{FindingStatus, PlanningReviewResult};
 use serde_json::{json, Value};
 fn finding(id: &str, kind: &str) -> Value {

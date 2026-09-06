@@ -457,6 +457,36 @@ the plan above does not contain. Put the exact conflicting plan detail in `confl
 }
 
 /// Asks Critic to review one unit's diff, read-only.
+/// Review dependency impact on a completed unit after its fixed tests run again.
+pub fn revalidation_review(
+    plan: &Plan,
+    unit: &Unit,
+    head: &str,
+    evidence: &str,
+    diff: &str,
+) -> String {
+    format!("{COMMON}
+
+# Your job: independently review dependency impact on {id}
+
+Read the current candidate at HEAD {head}. This unit's contract was implemented previously and its fixed tests just passed again.
+Changes by other units are inputs to this impact review. Evaluate whether the current candidate still satisfies this unit's acceptance and selected behavior.
+Report concrete dependency regressions, missing coverage or violated invariants as fail. Keep the worktree unchanged.
+
+## Required behavior
+{acceptance}
+## Selected decisions
+{decisions}
+## Prior implementation and current verification evidence
+{evidence}
+## Changes since implementation
+{diff}
+## Result contract
+Return exactly this JSON object:
+{contract}", id=unit.id, acceptance=acceptance_for(plan,unit), decisions=decisions_for(plan,unit),
+        evidence=quoted(evidence), diff=quoted(diff), contract=ReviewResult::CONTRACT)
+}
+
 pub fn unit_reviewer(plan: &Plan, unit: &Unit, diff: &str) -> String {
     format!(
         "{COMMON}
