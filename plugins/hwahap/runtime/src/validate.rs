@@ -852,6 +852,21 @@ fn check_verification(plan: &Plan, out: &mut Vec<Violation>) {
                 format!("{} has no test", unit.id),
             ));
         }
+        if !unit.probe {
+            let covered = id_set(
+                plan.tests_for(&unit.id)
+                    .iter()
+                    .flat_map(|test| test.acceptance_ids.iter().map(String::as_str)),
+            );
+            for id in &unit.acceptance_ids {
+                if !covered.contains(id.as_str()) {
+                    out.push(Violation::new(
+                        "uncovered_unit_acceptance",
+                        format!("{} has no own test for acceptance {id}", unit.id),
+                    ));
+                }
+            }
+        }
     }
     for test in &plan.tests {
         // A test whose unit does not exist is a dangling reference, reported there; there is no unit

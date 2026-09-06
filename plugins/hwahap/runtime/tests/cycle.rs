@@ -235,6 +235,35 @@ async fn plan_to_confirmation(fixture: &Fixture, script: &Script) -> String {
     challenge_in(&proved.message, "CONFIRM PLAN ")
 }
 
+#[tokio::test]
+async fn t04_normal_plan_reports_own_coverage_gap_before_build() {
+    let f = Fixture::new();
+    let mut steps = happy_path_steps()[..6].to_vec();
+    steps.extend([
+        step(Role::ColdConsumer, Reply::say(PASS)),
+        step(Role::PlanCritic, Reply::say(PASS)),
+    ]);
+    let script = Script::new(steps);
+    let challenge = plan_to_confirmation(&f, &script).await;
+    let store = hwahap::state::Store::open(&f.repo).unwrap();
+    let mut plan = store.read_plan().unwrap().unwrap();
+    plan.units[0].acceptance_ids.push("A2".into());
+    store.write_plan(&plan).unwrap();
+    let engine = f.engine();
+    engine
+        .step_with(&script, None, Some(&format!("CONFIRM PLAN {challenge}")))
+        .await
+        .unwrap();
+    let outcome = engine.step_with(&script, None, None).await.unwrap();
+    assert!(
+        outcome.message.contains("uncovered_unit_acceptance"),
+        "{}",
+        outcome.message
+    );
+    assert!(!store.read_plan().unwrap().unwrap().is_frozen().unwrap());
+    assert!(!f.worktree().exists());
+}
+
 /// Runs the whole cycle and returns every outcome from the confirmation onwards.
 async fn run_to_draft_pr(fixture: &Fixture, script: &Script) -> Vec<StepOutcome> {
     let challenge = plan_to_confirmation(fixture, script).await;

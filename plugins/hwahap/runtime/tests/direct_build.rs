@@ -22,6 +22,24 @@ fn request() -> BuildRequest {
     }
 }
 
+#[test]
+fn t04_direct_build_rejects_an_empty_test_before_recording_authority() {
+    let fixture = Fixture::new();
+    git(
+        &fixture.repo,
+        &["update-ref", "refs/remotes/origin/main", "HEAD"],
+    );
+    let mut input = request();
+    input.units[0].test_command.clear();
+    assert!(fixture.engine().start_build(&input).is_err());
+    assert!(Store::open(&fixture.repo)
+        .unwrap()
+        .read_run()
+        .unwrap()
+        .is_none());
+    assert!(!fixture.worktree().exists());
+}
+
 #[tokio::test]
 async fn recheck_rejects_mixed_actions_before_any_work() {
     let fixture = Fixture::new();

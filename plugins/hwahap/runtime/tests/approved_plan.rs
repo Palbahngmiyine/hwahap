@@ -38,6 +38,22 @@ fn request(f: &Fixture) -> ApprovedPlanRequest {
     }
 }
 
+#[test]
+fn t04_invalid_verification_preserves_the_existing_draft() {
+    let f = Fixture::new();
+    let mut input = request(&f);
+    f.engine().start_planning("Existing draft", false).unwrap();
+    let store = Store::open(&f.repo).unwrap();
+    let before = store.read_plan().unwrap().unwrap();
+    let history = store.read_events().unwrap();
+    input.replaces_plan_digest = Some(before.digest().unwrap().to_string());
+    input.contract.units[0].test_command.clear();
+    assert!(f.engine().register_approved_plan(&input).is_err());
+    assert_eq!(store.read_plan().unwrap().unwrap(), before);
+    assert_eq!(store.read_events().unwrap(), history);
+    assert!(!f.worktree().exists());
+}
+
 #[tokio::test]
 async fn approved_plan_replaces_only_the_named_draft_then_builds_without_reapproval() {
     let f = Fixture::new();
