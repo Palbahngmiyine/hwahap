@@ -1,15 +1,28 @@
 #!/bin/sh
-# Use only this installation's current release; stdout remains the MCP transport.
+# Diagnostics use stderr; stdout belongs exclusively to the MCP server.
 set -eu
-skill_root=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
-expected_version=$(cat "$skill_root/version.txt")
-binary="$skill_root/runtime/target/release/hwahap"
+root=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
+version=$(cat "$root/version.txt")
+binary="$root/runtime/target/release/hwahap"
 if [ ! -x "$binary" ]; then
-  echo "hwahap: build the current release with cargo build --release --manifest-path $skill_root/runtime/Cargo.toml" >&2
-  exit 1
+  case "$(uname -s)-$(uname -m)" in
+    Darwin-arm64) target=aarch64-apple-darwin ;;
+    Darwin-x86_64) target=x86_64-apple-darwin ;;
+    Linux-x86_64) target=x86_64-unknown-linux-gnu ;;
+    *) echo 'hwahap: use macOS (Apple Silicon/Intel) or Linux x86_64; see README for source builds' >&2; exit 1 ;;
+  esac
+  cache="${PLUGIN_DATA:-${XDG_CACHE_HOME:-$HOME/.cache}/hwahap}/runtime/$version/$target"
+  binary="$cache/hwahap"
+  if [ ! -x "$binary" ]; then
+    if [ "${HWAHAP_OFFLINE:-0}" = 1 ]; then
+      echo 'hwahap: runtime is not cached; allow one online start or install a release archive' >&2
+      exit 1
+    fi
+    "$root/bin/install-runtime" "$target" "$cache"
+  fi
 fi
-if [ "$("$binary" --version)" != "hwahap $expected_version" ]; then
-  echo "hwahap: this launcher requires hwahap $expected_version; rebuild this installation." >&2
+if [ "$("$binary" --version)" != "hwahap $version" ]; then
+  echo "hwahap: expected $version; remove the stale runtime at $binary and reinstall" >&2
   exit 1
 fi
 exec "$binary" "$@"

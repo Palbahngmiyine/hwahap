@@ -21,6 +21,8 @@ fn only_the_packaged_current_release_can_start() {
     let launch = || {
         Command::new(&launcher)
             .env("HWAHAP_BIN", root.join("path/hwahap"))
+            .env("PLUGIN_DATA", root.join("cache"))
+            .env("HWAHAP_OFFLINE", "1")
             .env(
                 "PATH",
                 format!("{}:/usr/bin:/bin", root.join("path").display()),

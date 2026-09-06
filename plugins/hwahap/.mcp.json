@@ -1,7 +1,11 @@
 {
   "mcpServers": {
     "hwahap": {
-      "command": "${PLUGIN_ROOT}/bin/hwahap",
+      "command": "sh",
+      "args": [
+        "./bin/hwahap"
+      ],
+      "cwd": ".",
       "startup_timeout_sec": 120
     }
   }

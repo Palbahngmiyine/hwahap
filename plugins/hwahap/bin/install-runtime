@@ -1,0 +1,31 @@
+#!/usr/bin/env bash
+# Download one immutable release version into a caller-selected cache directory.
+set -euo pipefail
+root=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
+version=$(cat "$root/version.txt")
+target=${1:?missing target}
+destination=${2:?missing cache directory}
+case "$target" in
+  aarch64-apple-darwin|x86_64-apple-darwin|x86_64-unknown-linux-gnu) ;;
+  *) echo "hwahap: unsupported target $target" >&2; exit 1 ;;
+esac
+[[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[a-zA-Z0-9.-]+)?$ ]]
+for tool in curl gzip shasum; do
+  command -v "$tool" >/dev/null || { echo "hwahap: install $tool before starting the plugin" >&2; exit 1; }
+done
+mkdir -p "$destination"
+work=$(mktemp -d "$destination/.download.XXXXXX")
+trap 'rm -rf "$work"' EXIT
+asset="hwahap-v$version-$target.gz"
+url="https://github.com/Palbahngmiyine/hwahap/releases/download/v$version"
+echo "hwahap: downloading $version for $target (first start only)" >&2
+curl --fail --silent --show-error --location --proto '=https' --tlsv1.2 --connect-timeout 10 --max-time 60 "$url/$asset" -o "$work/runtime.gz"
+curl --fail --silent --show-error --location --proto '=https' --tlsv1.2 --connect-timeout 10 --max-time 30 "$url/$asset.sha256" -o "$work/checksum"
+read -r expected _ < "$work/checksum"
+[[ "$expected" =~ ^[[:xdigit:]]{64}$ ]] || { echo 'hwahap: invalid release checksum' >&2; exit 1; }
+actual=$(shasum -a 256 "$work/runtime.gz")
+test "${actual%% *}" = "$expected" || { echo 'hwahap: release checksum mismatch' >&2; exit 1; }
+gzip -dc "$work/runtime.gz" > "$work/hwahap"
+chmod 755 "$work/hwahap"
+test "$("$work/hwahap" --version)" = "hwahap $version" || { echo 'hwahap: release version mismatch' >&2; exit 1; }
+mv "$work/hwahap" "$destination/hwahap"
