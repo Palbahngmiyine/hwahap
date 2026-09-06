@@ -1,0 +1,34 @@
+{
+  "name": "hwahap",
+  "version": "0.1.0",
+  "description": "Plan, build, and review repository changes through a local MCP runtime.",
+  "author": {
+    "name": "Palbahngmiyine",
+    "url": "https://github.com/Palbahngmiyine"
+  },
+  "skills": "./skills/",
+  "interface": {
+    "displayName": "Hwahap",
+    "shortDescription": "Plan, build, and review changes with Codex.",
+    "longDescription": "A local workflow for confirmed implementation plans, tested changes, and draft pull request reviews. Requires Git, authenticated GitHub CLI, and a Codex host with Astra and Luna native agents.",
+    "developerName": "Palbahngmiyine",
+    "category": "Productivity",
+    "capabilities": [
+      "Read",
+      "Write"
+    ],
+    "defaultPrompt": [
+      "Use Hwahap to plan this change.",
+      "Use Hwahap to implement and review this change."
+    ]
+  },
+  "mcpServers": "./.mcp.json",
+  "homepage": "https://github.com/Palbahngmiyine/hwahap",
+  "repository": "https://github.com/Palbahngmiyine/hwahap",
+  "keywords": [
+    "codex",
+    "planning",
+    "code-review",
+    "mcp"
+  ]
+}

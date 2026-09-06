@@ -9,7 +9,7 @@
 set -euo pipefail
 
 root=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
-skill_dir="$root"
+skill_dir="$root/plugins/hwahap"
 src="$skill_dir/runtime/src"
 failures=0
 
@@ -51,7 +51,7 @@ production_matches() {
 
 # ---------------------------------------------------------------- surface size
 
-skill="$skill_dir/SKILL.md"
+skill="$skill_dir/skills/hwahap/SKILL.md"
 if [ ! -f "$skill" ]; then
   fail "the thin skill is missing at $skill"
 else

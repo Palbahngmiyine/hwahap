@@ -55,13 +55,13 @@ jobs:
           git config --global init.defaultBranch main
 
       - name: Check formatting
-        run: cargo fmt --manifest-path runtime/Cargo.toml --all -- --check
+        run: cargo fmt --manifest-path plugins/hwahap/runtime/Cargo.toml --all -- --check
 
       - name: Lint
-        run: cargo clippy --locked --manifest-path runtime/Cargo.toml --all-targets -- -D warnings
+        run: cargo clippy --locked --manifest-path plugins/hwahap/runtime/Cargo.toml --all-targets -- -D warnings
 
       - name: Test
-        run: cargo test --locked --manifest-path runtime/Cargo.toml --all-targets
+        run: cargo test --locked --manifest-path plugins/hwahap/runtime/Cargo.toml --all-targets
 
       - name: Reject generated repository changes
         run: test -z "$(git status --porcelain --untracked-files=all)"
@@ -81,13 +81,13 @@ jobs:
 
       - name: Check the launcher and the skill manifest
         run: |
-          sh -n bin/hwahap
-          test -x bin/hwahap
-          test -f SKILL.md
-          test ! -d skills
-          head -1 SKILL.md | grep -qx -- ---
-          grep -qE '^name: hwahap$' SKILL.md
-          grep -qE '^description: ' SKILL.md
+          sh -n plugins/hwahap/bin/hwahap
+          test -x plugins/hwahap/bin/hwahap
+          test -f plugins/hwahap/skills/hwahap/SKILL.md
+          test -f plugins/hwahap/.codex-plugin/plugin.json
+          head -1 plugins/hwahap/skills/hwahap/SKILL.md | grep -qx -- ---
+          grep -qE '^name: hwahap$' plugins/hwahap/skills/hwahap/SKILL.md
+          grep -qE '^description: ' plugins/hwahap/skills/hwahap/SKILL.md
 
   verify:
     needs: [test, gates]

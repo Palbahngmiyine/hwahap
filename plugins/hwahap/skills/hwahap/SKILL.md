@@ -20,7 +20,7 @@ For requested repairs under unchanged contracts use `adjust_build`; contract cha
 
 Use the server's `question_batch` and `question_response` protocol for decision rounds.
 Detect actually callable Codex question tools and their limits; never invent an AskUserQuestion tool
-or change Codex collaboration mode. See [USAGE.md](USAGE.md) for UI adaptation and raw answer handling.
+or change Codex collaboration mode. See [USAGE.md](../../USAGE.md) for UI adaptation and raw answer handling.
 Do not infer an answer from a default, missing response, cancellation or timeout.
 Forward other user messages verbatim. Never invent, complete or infer `CONFIRM PLAN` or `SHIP`.
 These two gates require the user's exact typed line, not a question-UI choice.
@@ -31,5 +31,5 @@ Retain the server's worker identities and roles; never invoke Hwahap recursively
 Use `hwahap_status` for progress and `recheck_pr:true` for the current draft's review recovery.
 Host-reported answers, models and usage are not independent identity, isolation or billing proof.
 
-[README.md](README.md) covers setup; [OPERATIONS.md](OPERATIONS.md) covers boundaries and recovery.
-[USAGE.md](USAGE.md) covers request shapes, question UI and allowed host-side usage metering.
+[README.md](../../ARCHITECTURE.md) covers setup; [OPERATIONS.md](../../OPERATIONS.md) covers boundaries and recovery.
+[USAGE.md](../../USAGE.md) covers request shapes, question UI and allowed host-side usage metering.

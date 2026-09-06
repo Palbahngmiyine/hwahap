@@ -1,0 +1,20 @@
+{
+  "name": "hwahap",
+  "interface": {
+    "displayName": "Hwahap"
+  },
+  "plugins": [
+    {
+      "name": "hwahap",
+      "source": {
+        "source": "local",
+        "path": "./plugins/hwahap"
+      },
+      "policy": {
+        "installation": "AVAILABLE",
+        "authentication": "ON_INSTALL"
+      },
+      "category": "Productivity"
+    }
+  ]
+}
