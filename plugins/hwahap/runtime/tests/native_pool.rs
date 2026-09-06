@@ -9,7 +9,7 @@ use common::Fixture;
 use hwahap::native::{
     NativeCompletion, NativeDispatch, NativeLane, NativeRegistration, NativeSessions,
 };
-use hwahap::profile::{Profiles, Role};
+use hwahap::profile::Role;
 use hwahap::session::SessionSpec;
 use hwahap::state::Store;
 
@@ -34,6 +34,10 @@ async fn three_occupied_child_slots_complete_three_hundred_jobs_without_replacem
         .step(Some("Inspect this repository"), None)
         .await
         .unwrap();
+    common::fixture_observation(
+        &Store::open(&fixture.repo).unwrap(),
+        "controlled-parent-task",
+    );
     let mut occupied = BTreeMap::new();
     let mut dispatch_ids = BTreeSet::new();
     let (mut spawns, mut followups) = (0, 0);
@@ -61,13 +65,8 @@ async fn three_occupied_child_slots_complete_three_hundred_jobs_without_replacem
         ] {
             // Recreate the broker for every job so in-memory reuse cannot satisfy this test.
             let broker = Arc::new(
-                NativeSessions::new(
-                    Store::open(&fixture.repo).unwrap(),
-                    Profiles::defaults(),
-                    1000,
-                    30,
-                )
-                .with_host_session_id("controlled-parent-task".to_string()),
+                NativeSessions::new(Store::open(&fixture.repo).unwrap(), 1000, 30)
+                    .with_host_session_id("controlled-parent-task".to_string()),
             );
             let spec = SessionSpec {
                 cwd: fixture.repo.clone(),
@@ -162,13 +161,8 @@ type Job = tokio::task::JoinHandle<hwahap::error::Result<hwahap::session::Sessio
 
 async fn start_job(fixture: &Fixture, role: Role) -> (Arc<NativeSessions>, NativeDispatch, Job) {
     let broker = Arc::new(
-        NativeSessions::new(
-            Store::open(&fixture.repo).unwrap(),
-            Profiles::defaults(),
-            1000,
-            30,
-        )
-        .with_host_session_id("guard-parent-task".into()),
+        NativeSessions::new(Store::open(&fixture.repo).unwrap(), 1000, 30)
+            .with_host_session_id("guard-parent-task".into()),
     );
     let spec = SessionSpec {
         cwd: fixture.repo.clone(),
@@ -218,6 +212,7 @@ async fn pool_fixture() -> Fixture {
         .step(Some("Inspect this repository"), None)
         .await
         .unwrap();
+    common::fixture_observation(&Store::open(&fixture.repo).unwrap(), "guard-parent-task");
     fixture
 }
 
@@ -309,14 +304,25 @@ async fn pool_model_or_effort_changes_refuse_reuse_and_replacement() {
     let artifacts = Store::open(&fixture.repo).unwrap().artifacts_path();
     let before = artifacts.read_dir().unwrap().count();
     for (model, effort) in [("other-model", "medium"), ("gpt-5.6-luna", "high")] {
-        let config = format!("[profiles.economy]\nmodel = {model:?}\neffort = {effort:?}\n[profiles.critic]\nmodel = \"gpt-6-astra\"\neffort = \"high\"\n[profiles.deep]\nmodel = \"gpt-6-astra\"\neffort = \"high\"\n");
-        let broker = NativeSessions::new(
-            Store::open(&fixture.repo).unwrap(),
-            Profiles::from_toml(&config).unwrap(),
-            1000,
-            30,
+        let store = Store::open(&fixture.repo).unwrap();
+        let mut observed = common::fixture_observation(&store, "guard-parent-task");
+        observed.models.remove("gpt-5.6-luna");
+        observed.models.insert(
+            model.into(),
+            hwahap::catalog::ObservedModel {
+                efforts: vec![effort.into()],
+                tools: vec!["exec_command".into()],
+            },
+        );
+        hwahap::catalog::host::observe(
+            &store,
+            &hwahap::clock::SystemClock,
+            "guard-parent-task",
+            &observed,
         )
-        .with_host_session_id("guard-parent-task".into());
+        .unwrap();
+        let broker = NativeSessions::new(Store::open(&fixture.repo).unwrap(), 1000, 30)
+            .with_host_session_id("guard-parent-task".into());
         let spec = SessionSpec {
             cwd: fixture.repo.clone(),
             role: Role::FactFinder,
@@ -327,10 +333,7 @@ async fn pool_model_or_effort_changes_refuse_reuse_and_replacement() {
             .await
             .unwrap()
             .unwrap_err();
-        assert!(
-            error.to_string().contains("model/effort changed"),
-            "{error}"
-        );
+        assert!(error.to_string().contains("model_unavailable"), "{error}");
         assert!(broker.dispatch().unwrap().is_none());
         assert_eq!(artifacts.read_dir().unwrap().count(), before);
     }

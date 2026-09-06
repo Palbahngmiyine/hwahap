@@ -15,6 +15,8 @@ async fn setup() -> (Fixture, NativeHost, NativeDispatch) {
         .step(Some("Inspect this repository"), None)
         .await
         .unwrap();
+    let store = hwahap::state::Store::open(&fixture.repo).unwrap();
+    common::fixture_observation(&store, &store.read_run().unwrap().unwrap().run_id);
     let host = NativeHost::default();
     let request = dispatch(&host, &fixture).await;
     (fixture, host, request)
@@ -501,6 +503,8 @@ async fn explicit_capacity_recoveries_still_exhaust_the_durable_request_budget()
         "[limits]\nnative_max_calls = 2\n",
     )
     .unwrap();
+    let store = hwahap::state::Store::open(&fixture.repo).unwrap();
+    common::fixture_observation(&store, &store.read_run().unwrap().unwrap().run_id);
     let mut host = NativeHost::default();
     let mut run_id = String::new();
     for expected in 1..=2 {

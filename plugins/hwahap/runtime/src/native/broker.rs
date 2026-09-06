@@ -6,9 +6,9 @@ use super::{
     json, load, save, timing, NativeCompletion, NativeDispatch, NativeRegistration, Pending,
 };
 use crate::error::{Error, Result};
-use crate::profile::Profiles;
 use crate::state::Store;
 
+mod catalog;
 mod dispatch;
 
 pub(super) struct Waiting {
@@ -19,7 +19,6 @@ pub(super) struct Waiting {
 /// A single-flight bridge: request is durable before the host can spawn an agent.
 pub struct NativeSessions {
     pub(super) store: Store,
-    pub(super) profiles: Profiles,
     pub(super) max_calls: u64,
     pub(super) timeout_secs: u64,
     pub(super) waiting: Mutex<Option<Waiting>>,
@@ -27,10 +26,9 @@ pub struct NativeSessions {
 }
 
 impl NativeSessions {
-    pub fn new(store: Store, profiles: Profiles, max_calls: u64, timeout_secs: u64) -> Self {
+    pub fn new(store: Store, max_calls: u64, timeout_secs: u64) -> Self {
         Self {
             store,
-            profiles,
             max_calls,
             timeout_secs,
             waiting: Mutex::new(None),

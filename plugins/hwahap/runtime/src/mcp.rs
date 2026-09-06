@@ -149,7 +149,12 @@ checks pass, and the final review is still fresh.";
 /// Arguments to `hwahap_step`.
 #[derive(Debug, Clone, Deserialize, JsonSchema)]
 pub struct StepArgs {
-    /// Observed stop acknowledgment for an interrupted verification command.
+    /// End the named run, preserving its worktree and evidence.
+    #[serde(default)]
+    pub abandon: Option<crate::native::AbandonRequest>,
+    /// Current host inventory, accompanying one native action.
+    #[serde(default)]
+    pub host_observation: Option<crate::catalog::HostObservation>,
     #[serde(default)]
     pub verification_recovery: Option<crate::verification::Recovery>,
     /// Exact Codex plan implementation request and its executable translation, reviewed before BUILD.
@@ -337,6 +342,7 @@ impl Hwahap {
             .advance(
                 &root,
                 NativeInput {
+                    host_observation: args.host_observation,
                     verification_recovery: args.verification_recovery,
                     approved_plan: args.approved_plan,
                     question_response: args.question_response,
@@ -351,6 +357,7 @@ impl Hwahap {
                     registration: args.registration,
                     completion: args.completion,
                     stopped: args.stopped,
+                    abandon: args.abandon,
                     dispatch_failure: args.dispatch_failure,
                     resume: args.resume,
                 },

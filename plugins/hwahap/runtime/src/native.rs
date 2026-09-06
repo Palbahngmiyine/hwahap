@@ -11,6 +11,8 @@ use crate::state::Store;
 
 mod broker;
 pub use broker::NativeSessions;
+mod abandon;
+pub use abandon::AbandonRequest;
 mod host;
 pub use host::{NativeHost, NativeInput, NativeProgress};
 mod failure;
@@ -27,6 +29,7 @@ const PENDING: &str = "native-pending.json";
 #[serde(deny_unknown_fields)]
 pub struct NativeDispatch {
     pub dispatch_id: String,
+    pub selection: crate::catalog::Selection,
     pub run_id: String,
     pub role: String,
     pub profile: String,

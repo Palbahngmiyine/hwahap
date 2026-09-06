@@ -524,6 +524,9 @@ impl Store {
 
     /// Reconciles the snapshot against the journal and returns the run to proceed from.
     pub fn recover(&self) -> Result<Option<Run>> {
+        if self.archive_pending() {
+            self.resume_archive()?;
+        }
         if !self.has_run() {
             return Ok(None);
         }
@@ -625,40 +628,6 @@ impl Store {
     /// `artifacts/` moves with them. Artifact names repeat across runs — every plan's first unit is
     /// `U1`, so its first attempt is always `U1-attempt-1.md` — and leaving the directory in place
     /// would let the next run overwrite the evidence the archived journal still points at.
-    pub fn archive(&self, clock: &dyn Clock) -> Result<()> {
-        let stamp = clock.now().replace(':', "-");
-        let archive = self.root.join("archive");
-        std::fs::create_dir_all(&archive).map_err(|e| Error::io(&archive, e))?;
-        let mut target = archive.join(&stamp);
-        let mut incarnation = 2;
-        loop {
-            match std::fs::create_dir(&target) {
-                Ok(()) => break,
-                Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => {
-                    target = archive.join(format!("{stamp}-{incarnation}"));
-                    incarnation += 1;
-                }
-                Err(e) => return Err(Error::io(&target, e)),
-            }
-        }
-        for name in [
-            "run.json",
-            "events.jsonl",
-            "plan.json",
-            "plan.md",
-            "report.md",
-            "usage.json",
-            "verification.json",
-            "artifacts",
-        ] {
-            let from = self.root.join(name);
-            if from.exists() {
-                std::fs::rename(&from, target.join(name)).map_err(|e| Error::io(&from, e))?;
-            }
-        }
-        Ok(())
-    }
-
     /// Removes the whole directory. Only for a user who abandons a run.
     pub fn destroy(self) -> Result<()> {
         std::fs::remove_dir_all(&self.root).map_err(|e| Error::io(&self.root, e))
@@ -1445,7 +1414,7 @@ mod tests {
         assert_eq!(store.read_run().unwrap(), None);
         assert!(store
             .root()
-            .join("archive/2026-09-04T00-00-00Z/run.json")
+            .join(format!("archive/{}/run.json", a_run().run_id))
             .exists());
 
         store.write_run(&clock(), &a_run()).unwrap();
@@ -1636,7 +1605,10 @@ mod tests {
             .unwrap();
         assert!(store
             .root()
-            .join("archive/2026-09-04T00-00-00Z/artifacts/U1-attempt-1.md")
+            .join(format!(
+                "archive/{}/artifacts/U1-attempt-1.md",
+                a_run().run_id
+            ))
             .exists());
     }
 
@@ -1647,3 +1619,5 @@ mod tests {
         assert!(!dir.path().join(DIR).exists());
     }
 }
+
+mod archive;

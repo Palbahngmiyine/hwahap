@@ -124,14 +124,14 @@ impl Engine {
             (&a.receipt, Role::UnitReviewer),
             (&d.receipt, Role::FinalReview),
         ] {
-            receipt.verify_for(
+            self.verify_session_receipt(
+                receipt,
                 &SessionSpec {
                     cwd: self.store.worktree_path(),
                     role,
                     unit: None,
                     prompt: String::new(),
                 },
-                &self.config.profiles,
             )?;
         }
         if a.report.security.blocked()
@@ -248,7 +248,7 @@ impl Engine {
             unit: None,
             prompt: String::new(),
         };
-        record.receipt.verify_for(&spec, &self.config.profiles)?;
+        self.verify_session_receipt(&record.receipt, &spec)?;
         Ok(record)
     }
 

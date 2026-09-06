@@ -15,7 +15,11 @@ use crate::session::{
 impl NativeSessions {
     pub async fn execute(&self, spec: &SessionSpec) -> Result<SessionOutcome> {
         let started = Instant::now();
-        let wanted = self.profiles.for_role(spec.role).clone();
+        let (selection, lane) = self.select(spec)?;
+        let wanted = crate::profile::ProfileSpec {
+            model: selection.model.clone(),
+            effort: crate::profile::Effort::parse(&selection.effort)?,
+        };
         let run = self
             .store
             .read_run()?
@@ -31,20 +35,6 @@ impl NativeSessions {
             Access::ReadOnly => "read_only",
             Access::WorkspaceWrite => "workspace_write",
         };
-        let lane = if wanted.model == "gpt-6-astra"
-            && matches!(
-                spec.role,
-                crate::profile::Role::FactFinder | crate::profile::Role::Implementer
-            ) {
-            NativeLane::Coordinator
-        } else {
-            NativeLane::for_role(spec.role)
-        };
-        if lane == NativeLane::Coordinator && wanted.model != "gpt-6-astra" {
-            return Err(Error::Rejected(
-                "native planning and repair require an Astra parent and profiles.deep.model=gpt-6-astra".into(),
-            ));
-        }
         let soft_budget_secs = timing::soft_budget(spec.role).min(self.timeout_secs);
         let hard_timeout_secs = self.timeout_secs;
         let pool_scope = self
@@ -62,7 +52,7 @@ impl NativeSessions {
              Keep investigation scoped. If blocked, report the concrete blocker in the result contract; \
              never claim a pass or completion merely because the time budget is ending. \
              New children start without inherited parent history. Reused children keep their lane \
-             and must treat this brief and current repository as authoritative. The Astra coordinator \
+             and must treat this brief and current repository as authoritative. The bound coordinator \
              performs author-side Deep roles; independent reviewers never write.\n\n{}\n\n\
              Native transport: wrap the result object above as {{\"dispatch_id\":\"{dispatch_id}\",\"result\":<result object>}}. \
              Return that single JSON envelope, not a prior turn's answer.",
@@ -78,7 +68,8 @@ impl NativeSessions {
             effort: wanted.effort.as_str().into(),
             cwd: spec.cwd.to_string_lossy().into_owned(),
             access: access.into(),
-            coordinator_allowed: wanted.model == "gpt-6-astra" && lane == NativeLane::Coordinator,
+            coordinator_allowed: lane == NativeLane::Coordinator,
+            selection: selection.clone(),
             prompt_digest: Digest::of_bytes(brief.as_bytes()).to_string(),
             plan_digest: run.plan_digest.map(|digest| digest.to_string()),
             base_head,
@@ -148,6 +139,7 @@ impl NativeSessions {
             final_message,
             receipt: SessionReceipt::Native(NativeReceipt {
                 dispatch_id,
+                selection,
                 agent_id: completion.agent_id,
                 profile: spec.role.profile(),
                 role: spec.role,

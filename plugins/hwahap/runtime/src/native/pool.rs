@@ -51,26 +51,26 @@ struct Pool {
     agents: BTreeMap<NativeLane, Agent>,
 }
 
-fn path(store: &Store, scope: &str) -> std::path::PathBuf {
+fn path(store: &Store, run: &str, scope: &str) -> std::path::PathBuf {
     store.root().join(format!(
         "native-pool-{}.json",
-        Digest::of_bytes(scope.as_bytes())
+        Digest::of_bytes(format!("{run}\0{scope}").as_bytes())
     ))
 }
 
-fn load(store: &Store, scope: &str) -> Result<Pool> {
-    match std::fs::read(path(store, scope)) {
+fn load(store: &Store, run: &str, scope: &str) -> Result<Pool> {
+    match std::fs::read(path(store, run, scope)) {
         Ok(bytes) => {
             serde_json::from_slice(&bytes).map_err(|e| Error::Corrupt(format!("native pool: {e}")))
         }
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(Pool::default()),
-        Err(e) => Err(Error::io(path(store, scope), e)),
+        Err(e) => Err(Error::io(path(store, run, scope), e)),
     }
 }
 
 /// Read-only scheduling: a busy, missing, or changed identity is never silently replaced.
 pub fn reusable(store: &Store, dispatch: &NativeDispatch) -> Result<Option<String>> {
-    let pool = load(store, &dispatch.pool_scope)?;
+    let pool = load(store, &dispatch.run_id, &dispatch.pool_scope)?;
     let Some(agent) = pool.agents.get(&dispatch.lane) else {
         return Ok(None);
     };
@@ -94,11 +94,11 @@ fn checked_registration(store: &Store, dispatch: &NativeDispatch, id: &str) -> R
         ));
     }
     if dispatch.lane == NativeLane::Coordinator {
-        return if id == "coordinator" {
+        return if id == "coordinator" && dispatch.coordinator_allowed {
             Ok(Pool::default())
         } else {
             Err(Error::Rejected(
-                "pooled planning and repair require the Astra coordinator".into(),
+                "coordinator dispatch requires its bound parent identity".into(),
             ))
         };
     }
@@ -111,7 +111,7 @@ fn checked_registration(store: &Store, dispatch: &NativeDispatch, id: &str) -> R
             "reuse must retain the exact native agent identity".into(),
         ));
     }
-    let pool = load(store, &dispatch.pool_scope)?;
+    let pool = load(store, &dispatch.run_id, &dispatch.pool_scope)?;
     if pool
         .agents
         .iter()
@@ -149,6 +149,15 @@ fn write_agent(store: &Store, dispatch: &NativeDispatch, id: &str, stopped: bool
     if dispatch.lane == NativeLane::Coordinator {
         return Ok(());
     }
+    if !pool.agents.contains_key(&dispatch.lane)
+        && !store.read_events()?.iter().any(|e| {
+            e.kind == "native_slot_reserved"
+                && e.data["run_id"] == dispatch.run_id
+                && e.data["agent_id"] == id
+        })
+    {
+        store.append_event(&crate::clock::SystemClock, "native_slot_reserved", serde_json::json!({"run_id":dispatch.run_id,"host_session_id":dispatch.pool_scope,"agent_id":id}))?;
+    }
     pool.agents.insert(
         dispatch.lane,
         Agent {
@@ -159,7 +168,10 @@ fn write_agent(store: &Store, dispatch: &NativeDispatch, id: &str, stopped: bool
             stopped,
         },
     );
-    store.write_atomic(&path(store, &dispatch.pool_scope), &json(&pool)?)
+    store.write_atomic(
+        &path(store, &dispatch.run_id, &dispatch.pool_scope),
+        &json(&pool)?,
+    )
 }
 
 /// Only durable completion or exact stop acknowledgment makes a lane reusable.
@@ -171,4 +183,48 @@ pub fn stopped(store: &Store, dispatch: &NativeDispatch) -> Result<()> {
         return Ok(());
     };
     write_agent(store, dispatch, id, true)
+}
+
+pub(super) fn bound(
+    store: &Store,
+    run: &str,
+    scope: &str,
+    lane: NativeLane,
+) -> Result<Option<(String, String)>> {
+    let pool = load(store, run, scope)?;
+    let Some(agent) = pool.agents.get(&lane) else {
+        return Ok(None);
+    };
+    if !agent.stopped {
+        return Err(Error::Rejected(
+            "native lane is busy; wait for its current work".into(),
+        ));
+    }
+    Ok(Some((agent.model.clone(), agent.effort.clone())))
+}
+
+pub(super) fn free_slots(
+    store: &Store,
+    observation: &crate::catalog::HostObservation,
+) -> Result<u32> {
+    let events = store.read_events()?;
+    let observed = events
+        .iter()
+        .rev()
+        .find(|e| e.kind == "host_observed" && e.data == serde_json::json!(observation))
+        .ok_or_else(|| Error::Rejected("host_stale: observation is not recorded".into()))?
+        .seq;
+    let reserved = events
+        .iter()
+        .filter(|e| {
+            e.seq > observed
+                && e.kind == "native_slot_reserved"
+                && e.data["host_session_id"] == observation.host_session_id
+        })
+        .filter_map(|e| e.data["agent_id"].as_str())
+        .collect::<std::collections::BTreeSet<_>>()
+        .len();
+    Ok(observation
+        .available_slots
+        .saturating_sub(reserved.try_into().unwrap_or(u32::MAX)))
 }

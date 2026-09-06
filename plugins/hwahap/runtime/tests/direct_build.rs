@@ -340,6 +340,7 @@ async fn native_direct_build_dispatches_authorship_to_the_parent_astra() {
     );
     fixture.engine().start_build(&request()).unwrap();
     let store = Store::open(&fixture.repo).unwrap();
+    common::fixture_observation(&store, "direct-owner");
     let config = hwahap::config::Config::for_run(&store).unwrap();
     for role in [Role::Implementer, Role::UnitReviewer, Role::FinalReview] {
         assert_eq!(config.profiles.for_role(role).model, "gpt-6-astra");

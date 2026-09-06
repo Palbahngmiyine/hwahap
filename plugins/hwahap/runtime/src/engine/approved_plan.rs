@@ -155,6 +155,7 @@ impl Engine {
             reviewed_head: None,
             seq: 0,
         };
+        crate::catalog::pin(&self.store, &*self.clock, &run.run_id)?;
         self.store.write_approved_plan(
             &*self.clock,
             &run,

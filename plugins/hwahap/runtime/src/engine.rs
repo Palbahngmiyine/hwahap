@@ -216,26 +216,7 @@ impl Engine {
                     .into(),
             )),
             (Some(run), Some(request)) if run.state.is_terminal() => {
-                let worktree = self.store.worktree_path();
-                match worktree.symlink_metadata() {
-                    Ok(_) => {
-                        let branch = if run.branch.is_empty() {
-                            format!("hwahap/{}", run.goal_id)
-                        } else {
-                            run.branch.clone()
-                        };
-                        self.check_plan_worktree(&branch, None)?;
-                        // Even non-force removal deletes ignored files; observe them explicitly.
-                        if !self.git.stdout_of(&worktree, &["ls-files", "--others", "--directory", "--no-empty-directory", "-z"])?.is_empty() {
-                            return Err(Error::Rejected("the previous worktree contains untracked or ignored files; review and preserve or clean up those files, then retry or use a new checkout".into()));
-                        }
-                        self.git.run(&["worktree", "remove", worktree.to_str().ok_or_else(|| Error::Rejected("non-UTF8 worktree".into()))?])?;
-                    }
-                    Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
-                    Err(error) => return Err(Error::io(&worktree, error)),
-                }
-                // A finished run does not block the next one, but it is not silently overwritten:
-                // only retire its state after the owned worktree was safely removed.
+                // Preserve the finished worktree and all run records before starting again.
                 self.store.archive(&*self.clock)?;
                 Ok(Resolved::Started(self.start(request, plan_only)?))
             }
@@ -369,6 +350,7 @@ impl Engine {
             reviewed_head: None,
             seq: 0,
         };
+        crate::catalog::pin(&self.store, &*self.clock, &run.run_id)?;
         self.store.write_run(&*self.clock, &run)?;
         Ok(self.report(
             &run,
@@ -1489,7 +1471,11 @@ impl Engine {
         } else {
             None
         };
-        let profiles = Config::for_run(&self.store)?.profiles;
+        let run = self
+            .store
+            .read_run()?
+            .ok_or_else(|| Error::Corrupt("missing run".into()))?;
+        let snapshot = crate::catalog::snapshot(&self.store, &run.run_id)?;
         let sequence = self
             .store
             .append_event(
@@ -1497,7 +1483,7 @@ impl Engine {
                 "session_requested",
                 serde_json::json!({
                     "role": role.as_str(), "unit": spec.unit,
-                    "model_requested": profiles.for_role(role).model,
+                    "catalog_digest": snapshot.digest,
                     "prompt_digest": Digest::of_bytes(spec.prompt.as_bytes()),
                 }),
             )?
@@ -1522,13 +1508,42 @@ impl Engine {
             }
         }
         let outcome = outcome?;
-        outcome.receipt.verify_for(&spec, &profiles)?;
+        self.verify_session_receipt(&outcome.receipt, &spec)?;
         self.store.write_artifact(
             &format!("receipt-{sequence:04}-{}.json", role.as_str()),
             &serde_json::to_string_pretty(&outcome.receipt)
                 .map_err(|e| Error::Internal(e.to_string()))?,
         )?;
         Ok(outcome)
+    }
+
+    fn verify_session_receipt(
+        &self,
+        receipt: &crate::session::SessionReceipt,
+        spec: &SessionSpec,
+    ) -> Result<()> {
+        let run = self
+            .store
+            .read_run()?
+            .ok_or_else(|| Error::Corrupt("missing run".into()))?;
+        let snapshot = crate::catalog::snapshot(&self.store, &run.run_id)?;
+        receipt.verify_for(spec, &snapshot)?;
+        let crate::session::SessionReceipt::Native(native) = receipt;
+        for event in self
+            .store
+            .read_events()?
+            .iter()
+            .filter(|e| e.kind == "host_observed")
+        {
+            if Digest::of(&event.data)?.to_string() == native.selection.host_digest {
+                let observed = serde_json::from_value(event.data.clone())
+                    .map_err(|e| Error::Corrupt(e.to_string()))?;
+                return native.selection.verify_observation(&observed);
+            }
+        }
+        Err(Error::Rejected(
+            "receipt has no recorded host observation".into(),
+        ))
     }
 
     fn apply_decisions(&self, plan: &mut Plan, final_message: &str) -> Result<()> {

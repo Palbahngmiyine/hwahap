@@ -1,18 +1,4 @@
-//! The three fixed model/effort profiles.
-//!
-//! Hwahap uses explicit role mappings, including one Deep repair after Economy fails. Each role maps
-//! to exactly one [`Profile`], and every profile pins one model at one effort. The mapping is data
-//! the user can read in one table, not a heuristic that decides differently on the second attempt.
-//!
-//! Two consequences shape this module:
-//! - `none`, `low` and `max` are not [`Effort`] variants at all. The policy forbids them, and a type
-//!   that cannot hold them cannot leak one into a request.
-//! - The model and the effort of a profile are parsed together or not at all. Configuring one
-//!   without the other is the skew the policy exists to prevent, so [`Profiles::from_toml`] rejects
-//!   a `model` or `effort` key that sits anywhere but inside a `[profiles.<name>]` table.
-//!
-//! Execution uses [`crate::session::NativeReceipt`]: requested settings and native agent identity,
-//! without claiming an independently observed applied model.
+//! Role classifications and validated effort identifiers. Catalogs select execution models.
 
 use std::collections::BTreeMap;
 
@@ -20,41 +6,41 @@ use serde::{Deserialize, Serialize};
 
 use crate::error::{Error, Result};
 
-/// The reasoning efforts Hwahap can request.
-///
-/// `none`, `low`, and `max` are deliberately NOT variants: the policy forbids them in every
-/// default profile, and a type that cannot hold them cannot leak them.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum Effort {
-    Medium,
-    High,
-    Xhigh,
-}
-
-/// The allowed efforts, in increasing order. Declaration order is the `Ord` order.
+/// A validated host effort identifier. Catalog data defines depth and preference.
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct Effort(std::borrow::Cow<'static, str>);
 const EFFORTS: [Effort; 3] = [Effort::Medium, Effort::High, Effort::Xhigh];
-
-/// The profiles, in the order the policy table lists them.
 const PROFILES: [Profile; 3] = [Profile::Economy, Profile::Critic, Profile::Deep];
-
+#[allow(non_upper_case_globals)]
 impl Effort {
-    /// The wire name, identical to the serialized form.
-    pub fn as_str(self) -> &'static str {
-        match self {
-            Effort::Medium => "medium",
-            Effort::High => "high",
-            Effort::Xhigh => "xhigh",
-        }
+    pub const Medium: Self = Self(std::borrow::Cow::Borrowed("medium"));
+    pub const High: Self = Self(std::borrow::Cow::Borrowed("high"));
+    pub const Xhigh: Self = Self(std::borrow::Cow::Borrowed("xhigh"));
+    pub fn as_str(&self) -> &str {
+        &self.0
     }
-
-    /// Parses a wire name, exactly.
-    ///
-    /// No trimming and no case folding: this text comes from a config file that the user is
-    /// expected to read back, and quietly accepting `High` would teach a spelling the rest of the
-    /// system does not honour.
-    pub fn parse(text: &str) -> Result<Effort> {
-        parse_effort(text).map_err(Error::UnsupportedProfile)
+    pub fn parse(text: &str) -> Result<Self> {
+        if !crate::catalog::identifier(text) {
+            return Err(Error::UnsupportedProfile(format!(
+                "invalid effort identifier {text:?}"
+            )));
+        }
+        Ok(Self(std::borrow::Cow::Owned(text.into())))
+    }
+}
+impl Serialize for Effort {
+    fn serialize<S: serde::Serializer>(
+        &self,
+        serializer: S,
+    ) -> std::result::Result<S::Ok, S::Error> {
+        serializer.serialize_str(self.as_str())
+    }
+}
+impl<'de> Deserialize<'de> for Effort {
+    fn deserialize<D: serde::Deserializer<'de>>(
+        deserializer: D,
+    ) -> std::result::Result<Self, D::Error> {
+        Self::parse(&String::deserialize(deserializer)?).map_err(serde::de::Error::custom)
     }
 }
 
@@ -544,7 +530,10 @@ effort = "high"
             .iter()
             .map(|p| profiles.spec(*p).model.as_str())
             .collect();
-        let efforts: BTreeSet<Effort> = PROFILES.iter().map(|p| profiles.spec(*p).effort).collect();
+        let efforts: BTreeSet<Effort> = PROFILES
+            .iter()
+            .map(|p| profiles.spec(*p).effort.clone())
+            .collect();
         assert_eq!(models, BTreeSet::from(["gpt-5.6-luna", "gpt-6-astra"]));
         assert_eq!(
             efforts.len(),
@@ -576,33 +565,17 @@ effort = "high"
     }
 
     #[test]
-    fn there_are_exactly_three_efforts_each_naming_itself() {
-        for effort in EFFORTS {
-            let expected = match effort {
-                Effort::Medium => "medium",
-                Effort::High => "high",
-                Effort::Xhigh => "xhigh",
-            };
-            assert_eq!(effort.as_str(), expected);
+    fn effort_identifiers_round_trip_without_implied_depth_order() {
+        for name in [
+            "medium", "high", "xhigh", "quick", "deep", "max", "ultra", "none",
+        ] {
+            let effort = Effort::parse(name).unwrap();
+            assert_eq!(effort.as_str(), name);
+            assert_eq!(
+                serde_json::from_str::<Effort>(&serde_json::to_string(&effort).unwrap()).unwrap(),
+                effort
+            );
         }
-        assert_eq!(EFFORTS.len(), 3);
-        assert_eq!(
-            EFFORTS
-                .iter()
-                .map(|e| e.as_str())
-                .collect::<BTreeSet<_>>()
-                .len(),
-            3
-        );
-    }
-
-    #[test]
-    fn efforts_order_from_cheapest_to_most_expensive() {
-        assert!(Effort::Medium < Effort::High);
-        assert!(Effort::High < Effort::Xhigh);
-        let mut shuffled = [Effort::Xhigh, Effort::Medium, Effort::High];
-        shuffled.sort();
-        assert_eq!(shuffled, EFFORTS);
     }
 
     #[test]
@@ -677,10 +650,12 @@ effort = "high"
     }
 
     #[test]
-    fn forbidden_efforts_cannot_even_be_deserialized() {
-        for forbidden in ["none", "low", "max"] {
-            let err = serde_json::from_str::<Effort>(&format!("\"{forbidden}\"")).unwrap_err();
-            assert!(err.to_string().contains("unknown variant"), "{err}");
+    fn malformed_effort_identifiers_are_rejected() {
+        for invalid in ["", " high", "high ", "a b", "a\nb"] {
+            assert!(Effort::parse(invalid).is_err());
+            assert!(
+                serde_json::from_str::<Effort>(&serde_json::to_string(invalid).unwrap()).is_err()
+            );
         }
     }
 
@@ -710,57 +685,11 @@ effort = "high"
     }
 
     #[test]
-    fn effort_parse_calls_the_forbidden_efforts_a_policy_error_and_names_the_allowed_ones() {
-        for forbidden in ["none", "low", "max"] {
-            let detail = message(Effort::parse(forbidden).unwrap_err());
-            assert!(detail.contains(&format!("{forbidden:?}")), "{detail}");
-            assert!(
-                detail.contains("forbidden by the effort policy"),
-                "{detail}"
-            );
-            assert!(detail.contains("medium, high, xhigh"), "{detail}");
-        }
-    }
-
-    #[test]
-    fn effort_parse_rejects_near_misses_as_unknown_rather_than_forbidden() {
-        for unknown in [
-            "",
-            " ",
-            " high",
-            "high ",
-            "high\n",
-            "\thigh",
-            "highest",
-            "hig",
-            "xhigh2",
-            "x high",
-            "medium,high",
-            "MEDIUM",
-            "Medium",
-            "HIGH",
-            "XHigh",
-            "xhıgh",
-            "hïgh",
-            "ｈｉｇｈ",
-            "high\u{0000}",
-            "high\u{0007}",
-            "high\u{feff}",
-            "\u{1f600}",
-        ] {
-            let detail = message(Effort::parse(unknown).unwrap_err());
-            assert!(
-                detail.contains("is not a known effort"),
-                "{unknown:?} should be an unknown effort, got {detail}"
-            );
-            assert!(detail.contains("medium, high, xhigh"), "{detail}");
-        }
-    }
-
-    #[test]
-    fn a_forbidden_effort_stops_the_run_rather_than_the_call() {
-        assert!(Effort::parse("low").unwrap_err().is_terminal_for_run());
-        assert!(Profiles::from_toml("").unwrap_err().is_terminal_for_run());
+    fn effort_names_need_catalog_support_in_addition_to_valid_syntax() {
+        let catalog = crate::catalog::bundled();
+        let requirements = &catalog.role_requirements[&Role::FactFinder];
+        assert!(Effort::parse("future-effort").is_ok());
+        assert!(!catalog.supports("gpt-5.6-luna", "future-effort", requirements));
     }
 
     #[test]

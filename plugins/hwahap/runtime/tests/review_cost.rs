@@ -53,7 +53,6 @@ async fn draft() -> Fixture {
 #[tokio::test]
 async fn completed_native_reviews_refresh_the_final_published_cost_report() {
     use hwahap::native::{NativeCompletion, NativeRegistration, NativeSessions};
-    use hwahap::profile::Profiles;
     use hwahap::session::TokenUsage;
     use std::sync::Arc;
     let f = draft().await;
@@ -72,12 +71,7 @@ async fn completed_native_reviews_refresh_the_final_published_cost_report() {
     .unwrap();
     assert_eq!(published_cost["total"]["requests"], 0);
     let binding = ReviewProgress::load(&store).unwrap().unwrap().binding;
-    let sessions = Arc::new(NativeSessions::new(
-        store.clone(),
-        Profiles::defaults(),
-        64,
-        20,
-    ));
+    let sessions = Arc::new(NativeSessions::new(store.clone(), 64, 20));
     let engine = f.engine();
     let runner = sessions.clone();
     let task = tokio::spawn(async move { engine.step_with(&*runner, None, None).await });

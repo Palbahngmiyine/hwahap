@@ -1,5 +1,6 @@
 //! Real Git and durable storage with a controlled host; no model access is implied.
 #![cfg(unix)]
+mod common;
 
 use std::sync::Arc;
 use std::time::Duration;
@@ -9,7 +10,7 @@ use hwahap::native::{
     acknowledge_stopped, orphan, NativeCompletion, NativeDispatch, NativeRegistration,
     NativeSessions, NativeStopped,
 };
-use hwahap::profile::{Profiles, Role};
+use hwahap::profile::Role;
 use hwahap::session::SessionSpec;
 use hwahap::state::Store;
 
@@ -76,9 +77,10 @@ async fn fixture(
         .step(Some("Inspect this repository"), None)
         .await
         .unwrap();
+    let store = Store::open(temp.path()).unwrap();
+    common::fixture_observation(&store, &store.read_run().unwrap().unwrap().run_id);
     let broker = Arc::new(NativeSessions::new(
         Store::open(temp.path()).unwrap(),
-        Profiles::defaults(),
         max_calls,
         timeout,
     ));
@@ -484,16 +486,19 @@ async fn coordinator_is_limited_to_astra_planning_roles() {
 async fn incompatible_coordinator_model_is_rejected_before_dispatch() {
     let (temp, _, mut spec) = fixture(5, 30).await;
     spec.role = Role::Recommender;
-    let profiles = Profiles::from_toml(
-        "[profiles.economy]\nmodel = 'gpt-5.6-luna'\neffort = 'medium'\n\
-         [profiles.critic]\nmodel = 'gpt-6-astra'\neffort = 'high'\n\
-         [profiles.deep]\nmodel = 'other-model'\neffort = 'high'\n",
+    let store = Store::open(temp.path()).unwrap();
+    let mut observed = hwahap::catalog::host::latest(&store).unwrap().unwrap();
+    observed.parent_model = "other-model".into();
+    hwahap::catalog::host::observe(
+        &store,
+        &hwahap::clock::SystemClock,
+        &observed.host_session_id,
+        &observed,
     )
     .unwrap();
-    let store = Store::open(temp.path()).unwrap();
-    let broker = NativeSessions::new(store.clone(), profiles, 5, 30);
+    let broker = NativeSessions::new(store.clone(), 5, 30);
     let error = broker.execute(&spec).await.unwrap_err().to_string();
-    assert!(error.contains("Astra parent"), "{error}");
+    assert!(error.contains("bound_capability_insufficient"), "{error}");
     assert!(broker.dispatch().unwrap().is_none());
     assert!(orphan(&store).unwrap().is_none());
     assert_eq!(

@@ -265,6 +265,7 @@ impl super::Engine {
             reviewed_head: None,
             seq: 0,
         };
+        crate::catalog::pin(&self.store, &*self.clock, &run.run_id)?;
         self.store.write_run(&*self.clock, &run)?;
         Ok(self.report(&run, "BUILD started from the recorded explicit instruction. Planning was omitted; scope, tests and independent review remain required.".into()))
     }

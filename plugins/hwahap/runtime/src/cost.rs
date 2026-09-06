@@ -192,10 +192,13 @@ pub fn summary(store: &Store) -> Result<serde_json::Value> {
     let estimate = pricing::estimate(store, &measured).unwrap_or_else(|error|
         serde_json::json!({"status":"invalid_configuration","priced_subtotal":null,"error":error.to_string()}));
     let run = store.read_run()?;
-    let config = crate::config::Config::for_run(store)?;
-    let role_policy: BTreeMap<_, _> = crate::profile::Role::ALL
-        .iter()
-        .map(|role| (role.as_str(), config.profiles.for_role(*role)))
+    let catalog = run
+        .as_ref()
+        .map(|r| crate::catalog::snapshot(store, &r.run_id))
+        .transpose()?;
+    let selections: Vec<_> = artifacts::<NativeDispatch>(store, "native-request-")?
+        .into_values()
+        .map(|d| d.selection)
         .collect();
     let progress = crate::pr_review::ReviewProgress::load(store)?;
     Ok(serde_json::json!({
@@ -204,7 +207,7 @@ pub fn summary(store: &Store) -> Result<serde_json::Value> {
         "coverage": "usage_reported_completions / requests; incomplete work may consume tokens",
         "total_billed_cost": "unknown",
         "native_thread_release": "unknown; completed or interrupted work does not prove a host thread was released",
-        "pool_scope": "at most three retained children for the same repository and parent task; initial capacity is host-owned",
+        "pool_scope": "at most three retained children for the same run and parent task; capacity is host-observed",
         "latency": latency::summary(store)?,
         "parent_relay_usage": "covered only when the parent session is explicitly attached; overlaps coordinator dispatch usage",
         "limits": "Missing usage is unknown, not zero. Session and dispatch totals overlap; never add them. Unattached sessions and work before attachment are excluded. Cached input is part of input.",
@@ -216,7 +219,8 @@ pub fn summary(store: &Store) -> Result<serde_json::Value> {
             "pr_repair_attempts":progress.as_ref().map(|p| p.repairs),
             "contract_digest":run.as_ref().and_then(|r| r.plan_digest.as_ref()),
             "reviewed_head":progress.as_ref().map(|p| &p.binding.head),
-            "requested_role_policy":role_policy,
+            "catalog_snapshot":catalog,
+            "model_selections":selections,
             "comparison":"Compare the same task, base commit and acceptance tests across separate runs; include failures and missing usage. These observations are not a model benchmark."
         },
     }))
@@ -268,7 +272,7 @@ mod tests {
             store,
             "request",
             id,
-            json!({"dispatch_id":id,"run_id":"run","role":"recommender",
+            json!({"dispatch_id":id,"run_id":"run","role":"recommender","selection":{"run_id":"run","host_session_id":"parent","role":"recommender","unit":null,"model":"m","effort":"high","requirements":{"capabilities":{},"depth":"deep"},"tools":[],"catalog_digest":"catalog","host_digest":"host","digest":"selection"},
             "profile":"deep","unit":null,"model":model,"effort":"high","cwd":"/tmp",
             "access":"read_only","coordinator_allowed":true,"prompt_digest":"x",
             "plan_digest":null,"base_head":"head","brief":"task","agent_id":null,"stop_required":false,"pool_scope":"parent","lane":"coordinator","soft_budget_secs":60,"hard_timeout_secs":180}),

@@ -45,3 +45,5 @@ where
 {
     serde::Deserialize::deserialize(deserializer)
 }
+
+pub mod catalog;

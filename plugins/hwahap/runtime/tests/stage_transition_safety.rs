@@ -86,38 +86,29 @@ async fn next_request_preserves_tracked_untracked_and_ignored_files_before_archi
     let original = store.read_run().unwrap().unwrap();
     let journal = std::fs::read(store.root().join("events.jsonl")).unwrap();
     for name in ["output", "user-owned.txt", "user.cache"] {
-        let path = f.worktree().join(name);
-        std::fs::write(&path, "preserve this independent work").unwrap();
-        assert!(
-            engine
-                .start_planning("Next planning request", true)
-                .is_err(),
-            "removed {name}"
-        );
+        std::fs::write(f.worktree().join(name), "preserve this independent work").unwrap();
+    }
+    let result = engine
+        .start_planning("Next planning request", true)
+        .unwrap();
+    assert_eq!(result.state, "inspecting");
+    assert_ne!(result.run_id, original.run_id);
+    let archived = store.root().join("archive").join(&original.run_id);
+    for name in ["output", "user-owned.txt", "user.cache"] {
         assert_eq!(
-            std::fs::read_to_string(&path).unwrap(),
+            std::fs::read_to_string(archived.join("worktree").join(name)).unwrap(),
             "preserve this independent work"
         );
-        assert_eq!(store.read_run().unwrap().unwrap(), original);
-        assert_eq!(store.read_plan().unwrap().unwrap(), plan);
-        assert_eq!(
-            std::fs::read(store.root().join("events.jsonl")).unwrap(),
-            journal
-        );
-        assert!(!store.root().join("archive").exists());
-        if name == "output" {
-            std::fs::write(path, "done").unwrap();
-        } else {
-            std::fs::remove_file(path).unwrap();
-        }
     }
-    assert_eq!(
-        engine
-            .start_planning("Next planning request", true)
-            .unwrap()
-            .state,
-        "inspecting"
-    );
+    let saved: hwahap::state::Run =
+        serde_json::from_slice(&std::fs::read(archived.join("run.json")).unwrap()).unwrap();
+    assert_eq!(saved, original);
+    let saved: hwahap::plan::Plan =
+        serde_json::from_slice(&std::fs::read(archived.join("plan.json")).unwrap()).unwrap();
+    assert_eq!(saved, plan);
+    assert!(std::fs::read(archived.join("events.jsonl"))
+        .unwrap()
+        .starts_with(&journal));
+    store.verify_archive(&original.run_id).unwrap();
     assert!(!f.worktree().exists());
-    assert!(store.root().join("archive").exists());
 }

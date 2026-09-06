@@ -1100,7 +1100,14 @@ async fn the_run_is_recorded_in_a_journal_that_verifies() {
         events.len() as u64,
         "the journal skipped a sequence number"
     );
-    assert!(events.iter().all(|e| e.ts == NOW));
+    assert!(events
+        .iter()
+        .filter(|e| e.kind != "host_observed")
+        .all(|e| e.ts == NOW));
+    assert!(events
+        .iter()
+        .filter(|e| e.kind == "host_observed")
+        .all(|e| chrono::DateTime::parse_from_rfc3339(&e.ts).is_ok()));
 }
 
 #[tokio::test]

@@ -16,6 +16,8 @@ use crate::state::Store;
 
 #[derive(Default)]
 pub struct NativeInput {
+    pub abandon: Option<super::AbandonRequest>,
+    pub host_observation: Option<crate::catalog::HostObservation>,
     pub verification_recovery: Option<crate::verification::Recovery>,
     pub approved_plan: Option<crate::approval::ApprovedPlanRequest>,
     pub plan_only: bool,
@@ -79,7 +81,8 @@ impl NativeHost {
                     .into(),
             ));
         }
-        let actions = usize::from(input.verification_recovery.is_some())
+        let actions = usize::from(input.abandon.is_some())
+            + usize::from(input.verification_recovery.is_some())
             + usize::from(input.build.is_some())
             + usize::from(input.approved_plan.is_some())
             + usize::from(input.build_confirmed.is_some())
@@ -112,6 +115,18 @@ impl NativeHost {
         if !active.contains_key(root) {
             let _lock = RepoLock::acquire(root)?;
             store.recover()?;
+        }
+        if let Some(request) = &input.abandon {
+            if let Some(done) = super::abandon::archived(&store, request)? {
+                return Ok(done);
+            }
+        }
+        if let Some(ack) = &input.stopped {
+            if let Some(done) =
+                super::abandon::replay_stop(&store, ack, input.host_session_id.as_deref())?
+            {
+                return Ok(done);
+            }
         }
         let expected_scope = input
             .host_session_id
@@ -174,6 +189,75 @@ impl NativeHost {
                     .into(),
             ));
         }
+        if let Some(request) = &input.abandon {
+            let lock = if let Some(running) = active.get(root) {
+                running._lock.clone()
+            } else {
+                Arc::new(RepoLock::acquire(root)?)
+            };
+            super::abandon::request(&store, request)?;
+            if let Some(mut running) = active.remove(root) {
+                running.task.abort();
+                let _ = (&mut running.task).await;
+            }
+            let result = super::abandon::finish(&store, request);
+            drop(lock);
+            return result;
+        }
+        if input.stopped.is_none() && input.verification_recovery.is_none() {
+            if let Some(request) = super::abandon::pending(&store)? {
+                let _lock = RepoLock::acquire(root)?;
+                return super::abandon::finish(&store, &request);
+            }
+        }
+        let observed = input.host_observation.clone();
+        let observing_parent = input.host_session_id.as_deref();
+        let starts =
+            input.request.is_some() || input.build.is_some() || input.approved_plan.is_some();
+        let observation_error = observed.as_ref().and_then(|observation| {
+            let _lock = if active.contains_key(root) {
+                None
+            } else {
+                match RepoLock::acquire(root) {
+                    Ok(lock) => Some(lock),
+                    Err(error) => return Some(error),
+                }
+            };
+            let result = match observing_parent {
+                None => Err(Error::Rejected(
+                    "host_observation requires host_session_id".into(),
+                )),
+                Some(parent) if starts => {
+                    use crate::clock::Clock;
+                    observation.validate(parent, &crate::clock::SystemClock.now())
+                }
+                Some(parent) => crate::catalog::host::observe(
+                    &store,
+                    &crate::clock::SystemClock,
+                    parent,
+                    observation,
+                ),
+            };
+            result.err()
+        });
+        let mut observation_error = observation_error;
+        if observation_error.is_some() && (input.completion.is_some() || input.stopped.is_some()) {
+            let _lock = if active.contains_key(root) {
+                None
+            } else {
+                Some(RepoLock::acquire(root)?)
+            };
+            store.append_event(
+                &crate::clock::SystemClock,
+                "host_observation_required",
+                serde_json::json!({"reason":"rejected companion observation"}),
+            )?;
+        }
+        if input.completion.is_none() && input.stopped.is_none() {
+            if let Some(error) = observation_error.take() {
+                return Err(error);
+            }
+        }
         if let Some(recovery) = &input.verification_recovery {
             if active.contains_key(root) || orphan(&store)?.is_some() {
                 return Err(Error::Rejected(
@@ -206,6 +290,14 @@ impl NativeHost {
             let outcome = if let Some(approved) = &input.approved_plan {
                 let outcome = engine
                     .register_approved_plan_for_parent(approved, expected_scope.as_deref())?;
+                if let Some(observation) = &observed {
+                    crate::catalog::host::observe(
+                        &store,
+                        &crate::clock::SystemClock,
+                        &observation.host_session_id,
+                        observation,
+                    )?;
+                }
                 crate::pr_review::save_evidence(
                     &store,
                     "native-owner.json",
@@ -247,6 +339,14 @@ impl NativeHost {
             let _lock = RepoLock::acquire(root)?;
             let outcome = Engine::open(root)?
                 .start_build_for_parent(build, input.host_session_id.as_deref())?;
+            if let Some(observation) = &observed {
+                crate::catalog::host::observe(
+                    &store,
+                    &crate::clock::SystemClock,
+                    &observation.host_session_id,
+                    observation,
+                )?;
+            }
             crate::pr_review::save_evidence(
                 &store,
                 "native-owner.json",
@@ -284,6 +384,27 @@ impl NativeHost {
             return progress(root, orphan(&store)?, false);
         }
         if let Some(ack) = &input.stopped {
+            if ack.dispatch_id.len() != 64
+                || !ack.dispatch_id.bytes().all(|b| b.is_ascii_hexdigit())
+            {
+                return Err(Error::Rejected("invalid stop dispatch ID".into()));
+            }
+            if orphan(&store)?.is_none() {
+                if let Some(request) = super::abandon::pending(&store)? {
+                    let path = store
+                        .artifacts_path()
+                        .join(format!("native-stopped-{}.json", ack.dispatch_id));
+                    let saved: super::NativeStopped = serde_json::from_slice(
+                        &std::fs::read(&path).map_err(|e| Error::io(&path, e))?,
+                    )
+                    .map_err(|e| Error::Corrupt(e.to_string()))?;
+                    if serde_json::to_value(&saved).unwrap() != serde_json::to_value(ack).unwrap() {
+                        return Err(Error::Rejected("stop replay differs".into()));
+                    }
+                    let _lock = RepoLock::acquire(root)?;
+                    return super::abandon::finish(&store, &request);
+                }
+            }
             super::check_stopped(&store, ack)?;
             let lock = if let Some(mut running) = active.remove(root) {
                 running.task.abort();
@@ -293,6 +414,12 @@ impl NativeHost {
                 Arc::new(RepoLock::acquire(root)?)
             };
             acknowledge_stopped(&store, ack)?;
+            if let Some(error) = observation_error.take() {
+                return Err(error);
+            }
+            if let Some(request) = super::abandon::pending(&store)? {
+                return super::abandon::finish(&store, &request);
+            }
             drop(lock);
             return progress(root, None, false);
         }
@@ -307,6 +434,9 @@ impl NativeHost {
             }
             if let Some(completion) = input.completion {
                 running.broker.complete(completion)?;
+                if let Some(error) = observation_error.take() {
+                    return Err(error);
+                }
             }
         } else {
             let lock = Arc::new(RepoLock::acquire(root)?);
@@ -325,6 +455,9 @@ impl NativeHost {
             }
             if let Some(completion) = input.completion {
                 if NativeSessions::recorded_completion(&store, &completion)? {
+                    if let Some(error) = observation_error.take() {
+                        return Err(error);
+                    }
                     return progress(root, None, false);
                 }
                 return Err(Error::Rejected(
@@ -334,12 +467,8 @@ impl NativeHost {
             let config = Config::for_run(&store)?;
             let start_store = store.clone();
             let start_parent = input.host_session_id.clone();
-            let mut sessions = NativeSessions::new(
-                store,
-                config.profiles,
-                config.native_max_calls,
-                config.native_timeout_secs,
-            );
+            let mut sessions =
+                NativeSessions::new(store, config.native_max_calls, config.native_timeout_secs);
             if let Some(scope) = input.host_session_id {
                 sessions = sessions.with_host_session_id(scope);
             }
@@ -351,6 +480,14 @@ impl NativeHost {
                 let _lock = task_lock;
                 if let Some(request) = input.request.as_deref() {
                     let outcome = engine.start_planning(request, input.plan_only)?;
+                    if let Some(observation) = &observed {
+                        crate::catalog::host::observe(
+                            &start_store,
+                            &crate::clock::SystemClock,
+                            &observation.host_session_id,
+                            observation,
+                        )?;
+                    }
                     crate::pr_review::save_evidence(
                         &start_store,
                         "native-owner.json",

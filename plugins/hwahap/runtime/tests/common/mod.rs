@@ -170,14 +170,28 @@ impl Script {
         let store = hwahap::state::Store::open(Path::new(&common).parent().unwrap())?;
         let profiles = hwahap::config::Config::for_run(&store)?.profiles;
         let wanted = profiles.for_role(spec.role);
+        let run = store.read_run()?.expect("scripted run");
+        let snapshot = hwahap::catalog::snapshot(&store, &run.run_id)?;
+        let parent = hwahap::catalog::host::latest(&store)?
+            .map(|o| o.host_session_id)
+            .unwrap_or_else(|| run.run_id.clone());
+        let host = fixture_observation(&store, &parent);
         let mut receipt = NativeReceipt {
+            selection: hwahap::catalog::Selection::new(
+                &snapshot,
+                &host,
+                spec.role,
+                spec.unit.clone(),
+                &wanted.model,
+                wanted.effort.as_str(),
+            )?,
             dispatch_id: format!("script-{:?}-{}", spec.role, self.calls().len()),
             agent_id: format!("script-{:?}", spec.role),
             profile: spec.role.profile(),
             role: spec.role,
             unit: spec.unit.clone(),
             model_requested: wanted.model.clone(),
-            effort_requested: wanted.effort,
+            effort_requested: wanted.effort.clone(),
             elapsed_ms: 1,
             reported_usage: None,
         };
@@ -502,3 +516,35 @@ esac
 echo "gh-stub: unexpected invocation: $*" >&2
 exit 1
 "#;
+
+pub fn fixture_observation(
+    store: &hwahap::state::Store,
+    parent: &str,
+) -> hwahap::catalog::HostObservation {
+    use hwahap::clock::{Clock, SystemClock};
+    let catalog = hwahap::catalog::bundled();
+    let parent = parent.to_owned();
+    let observed = hwahap::catalog::HostObservation {
+        host_session_id: parent.clone(),
+        observed_at: SystemClock.now(),
+        source: "scripted test host inventory".into(),
+        parent_model: "gpt-6-astra".into(),
+        parent_effort: "high".into(),
+        available_slots: 3,
+        models: catalog
+            .models
+            .into_iter()
+            .map(|m| {
+                (
+                    m.id,
+                    hwahap::catalog::ObservedModel {
+                        efforts: m.efforts.into_iter().map(|e| e.name).collect(),
+                        tools: vec!["exec_command".into(), "apply_patch".into()],
+                    },
+                )
+            })
+            .collect(),
+    };
+    hwahap::catalog::host::observe(store, &SystemClock, &parent, &observed).unwrap();
+    observed
+}
