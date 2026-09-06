@@ -54,6 +54,13 @@ jobs:
           rustup target add "$TARGET"
           cargo build --locked --release --manifest-path plugins/hwahap/runtime/Cargo.toml --target "$TARGET"
           tests/package.sh "$TARGET"
+      - name: Verify actual Codex plugin installation
+        env:
+          TARGET: ${{ matrix.target }}
+        run: |
+          npm install --prefix "$RUNNER_TEMP/hwahap-codex" @openai/codex@0.152.1 --ignore-scripts --no-audit --no-fund
+          export PATH="$RUNNER_TEMP/hwahap-codex/node_modules/.bin:$PATH"
+          python3 tests/plugin-install.py "plugins/hwahap/runtime/target/$TARGET/release/hwahap"
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: ${{ matrix.target }}

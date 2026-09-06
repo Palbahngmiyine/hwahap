@@ -82,6 +82,9 @@ jobs:
           ref: ${{ inputs.ref || github.sha }}
           persist-credentials: false
 
+      - name: Check release version consistency
+        run: python3 tests/versions.py
+
       - name: Enforce the static simplicity gates
         run: tests/gates.sh
 
