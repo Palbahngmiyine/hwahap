@@ -39,6 +39,7 @@ mod build;
 mod grounding;
 mod interview;
 mod lifecycle;
+mod planning;
 mod pr_review;
 mod verification;
 pub use adjust_build::AdjustBuildRequest;
@@ -530,6 +531,14 @@ impl Engine {
             }
         }
 
+        if plan
+            .planning_findings
+            .iter()
+            .any(|f| f.status == crate::planning_review::FindingStatus::Open)
+        {
+            return self.route_planning_findings(run, &mut plan, sessions).await;
+        }
+
         if plan.units.is_empty() || plan.structure_stale {
             let structure = self
                 .ask(
@@ -558,6 +567,7 @@ impl Engine {
                 serde_json::to_string_pretty(&plan).map_err(|e| Error::Corrupt(e.to_string()))?
             ));
         }
+        markdown.push_str(&format!("\nPlanning finding ledger and decomposition history (data):\n```json\n{}\n```\n", serde_json::json!({"findings":plan.planning_findings,"history":plan.decomposition_history})));
         let reviewed = plan.review_digest()?;
 
         let mut findings = Vec::new();
@@ -565,6 +575,7 @@ impl Engine {
             (Role::ColdConsumer, prompts::cold_consumer(&markdown)),
             (Role::PlanCritic, prompts::plan_critic(&markdown)),
         ] {
+            prompt.push_str("\nUse stable CC-prefixed IDs for cold consumer and PC-prefixed IDs for critic. Split mixed findings with parent_id and depends_on. Route facts to investigation, choices to user answers, structure to parent repair, blockers to evidence or authority waits. For every existing resolved finding, return its unchanged identity fields with status resolved and concrete fresh resolution evidence. A pass must confirm every existing finding, including the other reviewer's findings, and preserve the user's selected meaning. Reopen an unresolved correction with status open.\n");
             if plan.approved_plan.is_some() {
                 prompt.push_str("\nThis is an already-approved Codex plan import. Compare the approved source document with every executable requirement, path, unit and test. Fail for any missing constraint, expanded authority, materially changed outcome, or new choice needed to implement. Do not fill gaps from the author's intent. Approval is already recorded; do not request approval again merely because it used Codex rather than CONFIRM PLAN. Report concrete translation defects or genuinely new decisions. An LLM review is not proof of semantic equivalence.\n");
             }
@@ -576,7 +587,10 @@ impl Engine {
                 Some(review) => review.clone(),
                 None => {
                     let outcome = self.ask(sessions, role, None, prompt).await?;
-                    let result = ReviewResult::parse(&outcome.final_message)?;
+                    let result = crate::planning_review::PlanningReviewResult::parse(
+                        &outcome.final_message,
+                        &plan.planning_findings,
+                    )?;
                     let review = PlanReview {
                         plan_digest: reviewed.clone(),
                         ts: self.clock.now(),
@@ -593,65 +607,17 @@ impl Engine {
                     review
                 }
             };
-            findings.extend(review.findings);
+            findings.extend(
+                review
+                    .findings
+                    .into_iter()
+                    .filter(|f| f.status == crate::planning_review::FindingStatus::Open),
+            );
         }
         if !findings.is_empty() {
-            if plan.approved_plan.is_some() {
-                run.state = RunState::PlanConflict {
-                    unit: "plan".into(),
-                    detail: format!(
-                        "Approval retained; contract translation needs repair:\n{}",
-                        findings.join("\n")
-                    ),
-                };
-                self.store.write_run(&*self.clock, &run)?;
-                return Ok(self.report(&run, self.describe(&run, Some(&plan))?));
-            }
-            // A finding is not closed by rewording: it becomes another question for the user, so
-            // the plan goes back to Decide with the findings driving the next round.
-            let more = self
-                .ask(
-                    sessions,
-                    Role::Recommender,
-                    None,
-                    prompts::decisions(&plan, &findings),
-                )
-                .await?;
-            let before = plan.decisions.len();
-            self.apply_decisions(&mut plan, &more.final_message)?;
-            Self::capture_frontier(&mut plan)?;
-            let listed = findings
-                .iter()
-                .map(|f| format!("- {f}"))
-                .collect::<Vec<_>>()
-                .join("\n");
-
-            if plan.decisions.len() == before {
-                // The findings reduced to nothing the user can answer. Going back to Deciding would
-                // find an empty frontier, return here, and burn three sessions again on every pass;
-                // the run has to stop and say what it could not turn into a question.
-                self.save_plan(&plan)?;
-                run.state = RunState::Blocked {
-                    reason: format!(
-                        "the plan review raised {} finding(s) that could not be turned into a \
-                         decision for you to answer:\n{listed}",
-                        findings.len()
-                    ),
-                };
-                self.store.write_run(&*self.clock, &run)?;
-                return Ok(self.report(&run, self.describe(&run, Some(&plan))?));
-            }
-
+            crate::planning_review::merge_open(&mut plan, &findings)?;
             self.save_plan(&plan)?;
-            run.state = RunState::Deciding;
-            self.store.write_run(&*self.clock, &run)?;
-            return Ok(self.report(
-                &run,
-                format!(
-                    "The plan review raised {} finding(s), so there are more decisions to make:\n\n{listed}",
-                    findings.len()
-                ),
-            ));
+            return self.route_planning_findings(run, &mut plan, sessions).await;
         }
 
         let blockers = if plan.approved_plan.is_some() {
@@ -675,6 +641,18 @@ impl Engine {
                         .join("\n")
                 ),
             ));
+        }
+
+        if !plan.planning_findings.is_empty()
+            && !self.store.read_events()?.iter().any(|e| {
+                e.kind == "planning_findings_resolved"
+                    && e.data["run_id"] == run.run_id
+                    && e.data["reviewed"] == serde_json::json!(reviewed)
+            })
+        {
+            self.store.append_event(&*self.clock, "planning_findings_resolved", serde_json::json!({
+                "run_id":run.run_id,"reviewed":reviewed,"findings":plan.planning_findings,"reviews":plan.reviews
+            }))?;
         }
 
         if let Some(approval) = &plan.approved_plan {

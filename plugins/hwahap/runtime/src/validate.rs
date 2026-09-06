@@ -39,6 +39,12 @@ impl Violation {
 pub fn structural_errors(plan: &Plan) -> Result<Vec<Violation>> {
     let mut out = Vec::new();
     check_schema(plan, &mut out);
+    if let Err(error) = crate::planning_review::validate_findings(&plan.planning_findings, &[]) {
+        out.push(Violation::new(
+            "invalid_planning_findings",
+            error.to_string(),
+        ));
+    }
     check_surfaces(plan, &mut out);
     check_ids(plan, &mut out);
     check_empty_fields(plan, &mut out);
@@ -63,6 +69,19 @@ pub fn freeze_blockers(plan: &Plan) -> Result<Vec<Violation>> {
     check_verification(plan, &mut out);
     check_reviews(plan, &mut out)?;
     Ok(sorted_unique(out))
+}
+
+/// Candidate structure uses the common freeze checks before independent reviews exist.
+pub fn planning_candidate_blockers(plan: &Plan) -> Result<Vec<Violation>> {
+    Ok(freeze_blockers(plan)?
+        .into_iter()
+        .filter(|v| {
+            !matches!(
+                v.code,
+                "missing_review" | "failed_review" | "stale_review" | "unresolved_planning_finding"
+            )
+        })
+        .collect())
 }
 
 /// Explicit BUILD keeps executable scope and verification checks without inventing planning evidence.
@@ -913,7 +932,21 @@ fn check_reviews(plan: &Plan, out: &mut Vec<Violation>) -> Result<()> {
                 format!("the {name} review has not been recorded"),
             )),
             Some(review) => {
-                if !review.passed {
+                if let Err(error) = crate::planning_review::require_resolutions(
+                    &plan.planning_findings,
+                    &review.findings,
+                ) {
+                    out.push(Violation::new(
+                        "unresolved_planning_finding",
+                        format!("{name}: {error}"),
+                    ));
+                }
+                if !review.passed
+                    || review
+                        .findings
+                        .iter()
+                        .any(|f| f.status == crate::planning_review::FindingStatus::Open)
+                {
                     out.push(Violation::new(
                         "failed_review",
                         format!("the {name} review did not pass"),

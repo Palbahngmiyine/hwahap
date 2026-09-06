@@ -364,6 +364,54 @@ fn render_reviews(plan: &Plan, md: &mut Md) -> Result<()> {
         md,
     );
     render_review("Critic", plan.reviews.critic.as_ref(), &reviewed, md);
+    if !plan.planning_findings.is_empty() {
+        md.blank();
+        md.line("<details><summary>지적과 해결 근거</summary>");
+        md.blank();
+        for finding in &plan.planning_findings {
+            let closed = [
+                plan.reviews.cold_consumer.as_ref(),
+                plan.reviews.critic.as_ref(),
+            ]
+            .into_iter()
+            .all(|r| {
+                r.is_some_and(|r| {
+                    r.passed
+                        && r.plan_digest == reviewed
+                        && crate::planning_review::require_resolutions(
+                            std::slice::from_ref(finding),
+                            &r.findings,
+                        )
+                        .is_ok()
+                })
+            });
+            md.line(format!(
+                "- {} · {}",
+                inline(&finding.summary()),
+                if closed {
+                    "검토 완료"
+                } else {
+                    "검토 대기"
+                }
+            ));
+            for h in plan
+                .decomposition_history
+                .iter()
+                .filter(|h| h.finding_ids.contains(&finding.id))
+            {
+                md.line(format!(
+                    "  - {}: {}",
+                    inline(&h.action),
+                    inline(&h.evidence.join("; "))
+                ));
+                for error in &h.validation {
+                    md.line(format!("  - 검증: {}", inline(error)));
+                }
+            }
+        }
+        md.blank();
+        md.line("</details>");
+    }
     Ok(())
 }
 
@@ -383,7 +431,7 @@ fn render_review(label: &str, review: Option<&PlanReview>, reviewed: &Digest, md
         }
     ));
     for finding in &review.findings {
-        md.line(format!("- {}", inline(finding)));
+        md.line(format!("- {}", inline(&finding.summary())));
     }
 }
 
@@ -1481,7 +1529,20 @@ mod tests {
             plan_digest: Digest::zero(),
             ts: ts(),
             passed: false,
-            findings: vec!["A2 has no test".into(), "R3 is unfalsifiable".into()],
+            findings: ["A2 has no test", "R3 is unfalsifiable"]
+                .iter()
+                .enumerate()
+                .map(|(i, text)| crate::planning_review::PlanningFinding {
+                    id: format!("PC{}", i + 1),
+                    parent_id: None,
+                    kind: crate::planning_review::FindingKind::Structure,
+                    targets: vec!["U1".into()],
+                    evidence: vec![text.to_string()],
+                    expected: text.to_string(),
+                    status: crate::planning_review::FindingStatus::Open,
+                    depends_on: vec![],
+                })
+                .collect(),
         };
         plan.reviews.critic = Some(stale);
         let rendered = plan_markdown(&plan).unwrap();
@@ -1493,8 +1554,8 @@ mod tests {
                 "Cold consumer: absent\n",
                 "\n",
                 "Critic: present, failed, stale\n",
-                "- A2 has no test\n",
-                "- R3 is unfalsifiable\n",
+                "- PC1: A2 has no test\n",
+                "- PC2: R3 is unfalsifiable\n",
             )
         );
     }

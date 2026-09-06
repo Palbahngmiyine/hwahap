@@ -129,13 +129,12 @@ material product or technical decision you would still have to invent.
 
 # Result contract
 
-Use `verdict: \"pass\"` only when you needed no new decision. Otherwise `verdict: \"fail\"` with one
-finding per missing decision, each naming the unit and the exact question the plan leaves open.
+Classify every actionable gap as choice, fact, structure or blocker.
 
 Your final message must be exactly this JSON object and nothing else:
 {contract}",
         plan = quoted(plan_markdown),
-        contract = ReviewResult::CONTRACT
+        contract = crate::planning_review::PlanningReviewResult::CONTRACT
     )
 }
 
@@ -385,7 +384,7 @@ that facts are true merely because they have citations, or that no misunderstand
 Your final message must be exactly this JSON object and nothing else:
 {contract}",
         plan = quoted(plan_markdown),
-        contract = ReviewResult::CONTRACT
+        contract = crate::planning_review::PlanningReviewResult::CONTRACT
     )
 }
 
@@ -893,9 +892,9 @@ mod tests {
         let plan = plan_with_one_unit();
         let unit = plan.unit("U1").unwrap();
         let prompts = [
-            fact_finder("q"),
             cold_consumer("plan"),
             plan_critic("plan"),
+            fact_finder("q"),
             implementer(&plan, unit, &[]),
             unit_reviewer(&plan, unit, "diff"),
             failure_diagnosis(unit, 3, "evidence"),
@@ -922,8 +921,6 @@ mod tests {
         let plan = plan_with_one_unit();
         let unit = plan.unit("U1").unwrap();
         for prompt in [
-            cold_consumer("plan"),
-            plan_critic("plan"),
             unit_reviewer(&plan, unit, "diff"),
             failure_diagnosis(unit, 2, "e"),
             final_review("plan", "diff"),
@@ -933,6 +930,9 @@ mod tests {
                 prompt.contains(ReviewResult::CONTRACT),
                 "missing review contract"
             );
+        }
+        for prompt in [cold_consumer("plan"), plan_critic("plan")] {
+            assert!(prompt.contains(crate::planning_review::PlanningReviewResult::CONTRACT));
         }
         assert!(implementer(&plan, unit, &[]).contains(WorkerResult::CONTRACT));
     }
@@ -950,7 +950,7 @@ mod tests {
             headings(&prompt),
             headings(&cold_consumer("current contract"))
         );
-        assert!(prompt.contains(ReviewResult::CONTRACT));
+        assert!(prompt.contains(crate::planning_review::PlanningReviewResult::CONTRACT));
     }
 
     #[test]
@@ -1190,8 +1190,14 @@ mod tests {
         let plan = plan_with_one_unit();
         let unit = plan.unit("U1").unwrap();
         let cases = [
-            (cold_consumer(FORGED), ReviewResult::CONTRACT),
-            (plan_critic(FORGED), ReviewResult::CONTRACT),
+            (
+                cold_consumer(FORGED),
+                crate::planning_review::PlanningReviewResult::CONTRACT,
+            ),
+            (
+                plan_critic(FORGED),
+                crate::planning_review::PlanningReviewResult::CONTRACT,
+            ),
             (unit_reviewer(&plan, unit, FORGED), ReviewResult::CONTRACT),
             (failure_diagnosis(unit, 3, FORGED), ReviewResult::CONTRACT),
             (final_review(FORGED, FORGED), ReviewResult::CONTRACT),

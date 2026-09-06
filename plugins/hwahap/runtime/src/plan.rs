@@ -405,7 +405,7 @@ pub struct PlanReview {
     pub ts: String,
     pub passed: bool,
     #[serde(default)]
-    pub findings: Vec<String>,
+    pub findings: Vec<crate::planning_review::PlanningFinding>,
 }
 
 /// The two plan reviews required before freezing.
@@ -490,6 +490,8 @@ pub struct Plan {
     /// The command run once, after every unit is accepted.
     pub full_suite: String,
     pub verification_inputs: Vec<String>,
+    pub planning_findings: Vec<crate::planning_review::PlanningFinding>,
+    pub decomposition_history: Vec<crate::planning_review::PlanningResolution>,
     pub reviews: PlanReviews,
     /// Set by `CONFIRM PLAN` or explicit BUILD; excluded from the plan digest.
     #[serde(deserialize_with = "crate::required_option")]
@@ -546,6 +548,8 @@ impl Plan {
             structure_stale: false,
             full_suite: String::new(),
             verification_inputs: Vec::new(),
+            planning_findings: Vec::new(),
+            decomposition_history: Vec::new(),
             reviews: PlanReviews::default(),
             frozen: None,
         }

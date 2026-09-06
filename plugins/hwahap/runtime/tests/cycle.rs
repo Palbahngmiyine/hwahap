@@ -2062,7 +2062,7 @@ async fn completed_plan_reviews_survive_an_interrupted_critic_or_recommender() {
     for fail_cold in [false, true] {
         let fixture = Fixture::new();
         let cold = if fail_cold {
-            r#"{"verdict":"fail","findings":["U1 leaves the output encoding undecided"]}"#
+            r#"{"verdict":"fail","findings":[{"id":"CC1","parent_id":null,"kind":"choice","targets":["U1"],"evidence":["U1 leaves the output encoding undecided"],"expected":"U1 leaves the output encoding undecided","status":"open","depends_on":[]}]}"#
         } else {
             PASS
         };
@@ -2633,7 +2633,9 @@ async fn adversarial_review_added_question_is_available_in_ui_batch() {
         step(Role::PlanSynthesis, Reply::say(structure())),
         step(
             Role::ColdConsumer,
-            Reply::say(r#"{"verdict":"fail","findings":["A new explicit decision is needed"]}"#),
+            Reply::say(
+                r#"{"verdict":"fail","findings":[{"id":"CC1","parent_id":null,"kind":"choice","targets":["U1"],"evidence":["A new explicit decision is needed"],"expected":"A new explicit decision is needed","status":"open","depends_on":[]}]}"#,
+            ),
         ),
         step(Role::PlanCritic, Reply::say(PASS)),
         step(Role::Recommender, Reply::say(followup.to_string())),

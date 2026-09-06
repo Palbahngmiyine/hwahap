@@ -115,6 +115,33 @@ impl Engine {
             .unwrap_or_else(|| super::goal_id(&self.clock.now(), &input.contract.objective));
         let mut candidate = input.candidate(&id, &base)?;
         candidate.revision = existing.as_ref().map_or(1, |r| r.revision + 1);
+        if let Some(previous) = &old {
+            candidate.planning_findings = previous.planning_findings.clone();
+            candidate.decomposition_history = previous.decomposition_history.clone();
+            if !candidate.planning_findings.is_empty() {
+                candidate
+                    .decomposition_history
+                    .push(crate::planning_review::PlanningResolution {
+                        finding_ids: candidate
+                            .planning_findings
+                            .iter()
+                            .map(|f| f.id.clone())
+                            .collect(),
+                        action: "translation_resubmitted".into(),
+                        evidence: vec![serde_json::to_string(input)
+                            .map_err(|e| Error::Corrupt(e.to_string()))?],
+                        decision_ids: Vec::new(),
+                        revision: candidate.revision,
+                        reviewed: previous.review_digest()?,
+                        attempt: None,
+                        validation: Vec::new(),
+                        prior_structure: Some(crate::planning_review::structure_value(previous)),
+                    });
+                for finding in &mut candidate.planning_findings {
+                    finding.status = crate::planning_review::FindingStatus::Resolved;
+                }
+            }
+        }
         let run = Run {
             schema: crate::plan::SCHEMA.into(),
             run_id: id.clone(),
