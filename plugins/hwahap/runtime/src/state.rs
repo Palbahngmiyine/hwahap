@@ -827,6 +827,7 @@ fn to_canonical_line<T: serde::Serialize>(value: &T) -> Result<String> {
 mod tests {
     use super::*;
     use crate::clock::FixedClock;
+    use serde_json::Value;
 
     fn store() -> (tempfile::TempDir, Store) {
         let dir = tempfile::tempdir().unwrap();
@@ -1599,6 +1600,7 @@ mod tests {
             .write_artifact("U1-attempt-1.md", "the first run")
             .unwrap();
         store.archive(&clock()).unwrap();
+        store.verify_archive(&a_run().run_id).unwrap();
         store.write_run(&clock(), &a_run()).unwrap();
         store
             .write_artifact("U1-attempt-1.md", "the second run")
@@ -1610,6 +1612,102 @@ mod tests {
                 a_run().run_id
             ))
             .exists());
+    }
+
+    #[test]
+    fn archive_restart_preserves_nested_artifacts_and_canonical_manifest() {
+        let (dir, store) = store();
+        store.write_run(&clock(), &a_run()).unwrap();
+        let nested = store.root().join("artifacts").join("nested");
+        std::fs::create_dir_all(&nested).unwrap();
+        std::fs::write(nested.join("proof.json"), "retained evidence").unwrap();
+        let target = store.root().join("archive").join(&a_run().run_id);
+        std::fs::create_dir_all(target.join("run.json")).unwrap();
+        assert!(store.archive(&clock()).is_err());
+        let intent = store.root().join("archive-intent.json");
+        let manifest: Value = serde_json::from_slice(&std::fs::read(&intent).unwrap()).unwrap();
+        assert!(manifest["files"]["artifacts/nested/proof.json"].is_string());
+        // Simulate the durable intent written by the earlier Windows candidate.
+        #[cfg(windows)]
+        {
+            let mut legacy = manifest.clone();
+            legacy["files"] = Value::Object(
+                manifest["files"]
+                    .as_object()
+                    .unwrap()
+                    .iter()
+                    .map(|(name, digest)| (name.replace('/', "\\"), digest.clone()))
+                    .collect(),
+            );
+            std::fs::write(&intent, serde_json::to_vec(&legacy).unwrap()).unwrap();
+        }
+        std::fs::remove_dir(target.join("run.json")).unwrap();
+        let reopened = Store::open(dir.path()).unwrap();
+        reopened.recover().unwrap();
+        reopened.verify_archive(&a_run().run_id).unwrap();
+        assert!(!reopened.archive_pending());
+        assert_eq!(
+            std::fs::read_to_string(target.join("artifacts/nested/proof.json")).unwrap(),
+            "retained evidence"
+        );
+        let completed: Value =
+            serde_json::from_slice(&std::fs::read(target.join("manifest.json")).unwrap()).unwrap();
+        assert_eq!(completed, manifest);
+    }
+
+    #[test]
+    fn archive_resume_rejects_noncanonical_paths_before_moving_files() {
+        for invalid in [
+            "artifacts/../run.json",
+            "artifacts/./proof",
+            "artifacts//proof",
+            "/artifacts/proof",
+            "artifacts/C:proof",
+            "native-pool-x/foreign.json",
+            "artifacts\\..\\run.json",
+            "artifacts\\proof",
+        ] {
+            if invalid.contains(':') && !cfg!(windows) {
+                continue;
+            }
+            let (_dir, store) = store();
+            store.write_run(&clock(), &a_run()).unwrap();
+            store.write_artifact("proof", "evidence").unwrap();
+            let intent = serde_json::json!({
+                "run_id": a_run().run_id, "worktree": null,
+                "files": {"run.json": Digest::of_bytes(b"run"),
+                    "events.jsonl": Digest::of_bytes(b"events"),
+                    "artifacts/proof": Digest::of_bytes(b"evidence"),
+                    invalid: Digest::of_bytes(b"evidence")}
+            });
+            std::fs::write(
+                store.root().join("archive-intent.json"),
+                serde_json::to_vec(&intent).unwrap(),
+            )
+            .unwrap();
+            assert!(store.resume_archive().is_err(), "{invalid}");
+            assert!(store.run_path().is_file());
+            assert_eq!(
+                std::fs::read_to_string(store.root().join("artifacts/proof")).unwrap(),
+                "evidence"
+            );
+            assert!(!store.root().join("archive").exists());
+        }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn archived_artifact_symlink_is_rejected() {
+        let (_dir, store) = store();
+        store.write_run(&clock(), &a_run()).unwrap();
+        store.write_artifact("proof", "evidence").unwrap();
+        store.archive(&clock()).unwrap();
+        let target = store.root().join("archive").join(&a_run().run_id);
+        let proof = target.join("artifacts/proof");
+        let replacement = target.join("replacement");
+        std::fs::rename(&proof, &replacement).unwrap();
+        std::os::unix::fs::symlink(&replacement, &proof).unwrap();
+        assert!(store.verify_archive(&a_run().run_id).is_err());
     }
 
     #[test]

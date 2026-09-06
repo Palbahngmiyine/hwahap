@@ -20,6 +20,35 @@ fn owned(name: &str) -> bool {
             | "verification.json"
     ) || (name.starts_with("native-pool-") && name.ends_with(".json"))
 }
+fn valid_name(name: &str) -> bool {
+    let parts: Vec<_> = name.split('/').collect();
+    !parts.iter().any(|p| {
+        p.is_empty()
+            || matches!(*p, "." | "..")
+            || (p.contains(['\\', '\0']) || (cfg!(windows) && p.contains(':')))
+    }) && ((parts.len() == 1 && owned(name)) || (parts.len() > 1 && parts[0] == "artifacts"))
+}
+fn manifest_name(root: &Path, path: &Path) -> Result<String> {
+    let mut parts = Vec::new();
+    for component in path
+        .strip_prefix(root)
+        .map_err(|e| Error::Corrupt(e.to_string()))?
+        .components()
+    {
+        let std::path::Component::Normal(part) = component else {
+            return Err(Error::Corrupt("invalid archive manifest path".into()));
+        };
+        parts.push(
+            part.to_str()
+                .ok_or_else(|| Error::Rejected("archive path is not UTF-8".into()))?,
+        );
+    }
+    let name = parts.join("/");
+    if !valid_name(&name) {
+        return Err(Error::Corrupt("invalid archive manifest path".into()));
+    }
+    Ok(name)
+}
 fn regular_ancestors(root: &Path, path: &Path) -> Result<()> {
     let relative = path
         .strip_prefix(root)
@@ -53,10 +82,7 @@ fn collect(root: &Path, path: &Path, files: &mut BTreeMap<String, Digest>) -> Re
         }
     } else if metadata.is_file() {
         files.insert(
-            path.strip_prefix(root)
-                .map_err(|e| Error::Corrupt(e.to_string()))?
-                .to_string_lossy()
-                .into_owned(),
+            manifest_name(root, path)?,
             Digest::of_bytes(&std::fs::read(path).map_err(|e| Error::io(path, e))?),
         );
     } else {
@@ -84,11 +110,7 @@ impl Store {
             return Err(Error::Corrupt("archive identity is incomplete".into()));
         }
         for (name, expected) in &manifest.files {
-            if Path::new(name)
-                .components()
-                .any(|c| !matches!(c, std::path::Component::Normal(_)))
-                || !(owned(name) || name.starts_with("artifacts/"))
-            {
+            if !valid_name(name) {
                 return Err(Error::Corrupt("invalid archive manifest path".into()));
             }
             let path = target.join(name);
@@ -179,20 +201,36 @@ impl Store {
             )?;
             manifest
         };
+        // Earlier Windows candidates persisted native separators before failing validation.
+        // Normalize only on Windows, where these names identify the same filesystem paths.
+        #[cfg(windows)]
+        let manifest = {
+            let mut normalized = BTreeMap::new();
+            for (name, digest) in manifest.files {
+                let name = name.replace('\\', "/");
+                if !valid_name(&name) || normalized.insert(name, digest).is_some() {
+                    return Err(Error::Corrupt("invalid archive manifest paths".into()));
+                }
+            }
+            Manifest {
+                files: normalized,
+                ..manifest
+            }
+        };
         if manifest.run_id.is_empty()
             || manifest.run_id.contains(['/', '\\'])
             || matches!(manifest.run_id.as_str(), "." | "..")
             || !manifest.files.contains_key("run.json")
             || !manifest.files.contains_key("events.jsonl")
-            || manifest.files.keys().any(|p| {
-                let path = Path::new(p);
-                path.components()
-                    .any(|c| !matches!(c, std::path::Component::Normal(_)))
-                    || !(owned(p) || p.starts_with("artifacts/"))
-            })
+            || manifest.files.keys().any(|p| !valid_name(p))
         {
             return Err(Error::Corrupt("invalid archive manifest paths".into()));
         }
+        #[cfg(windows)]
+        self.write_atomic(
+            &intent,
+            &serde_json::to_string(&manifest).map_err(|e| Error::Corrupt(e.to_string()))?,
+        )?;
         let target = self.root.join("archive").join(&manifest.run_id);
         regular_ancestors(&self.root, &target)?;
         std::fs::create_dir_all(&target).map_err(|e| Error::io(&target, e))?;
