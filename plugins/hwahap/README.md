@@ -8,5 +8,5 @@ Codex에서 구현 계획, 코드 변경, 테스트, draft PR 검토를 진행�
 
 첫 실행 시 GitHub Releases에서 이 패키지와 같은 버전의 런타임을 다운로드합니다.
 다운로드는 SHA-256과 실행 버전을 검사한 뒤 버전별 캐시에 저장합니다.
-`PLUGIN_DATA`가 있으면 그 아래에, 없으면 `${XDG_CACHE_HOME:-$HOME/.cache}/hwahap`에 저장합니다.
-`HWAHAP_OFFLINE=1`이면 자동 다운로드를 하지 않습니다.
+캐시는 `PLUGIN_DATA` 아래에 저장하며 기본 위치는 `${XDG_CACHE_HOME:-$HOME/.cache}/hwahap`입니다.
+`HWAHAP_OFFLINE=1`은 포함된 바이너리 또는 기존 캐시로 실행합니다.
