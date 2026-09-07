@@ -175,11 +175,31 @@ pub fn bundled() -> Catalog {
         id: id.into(),
         preference,
         capabilities: caps(levels),
-        efforts: vec![CatalogEffort {
-            name: name.into(),
-            depths,
-            preference: 0,
-        }],
+        efforts: if name == "high" {
+            vec![
+                CatalogEffort {
+                    name: "high".into(),
+                    depths,
+                    preference: 2,
+                },
+                CatalogEffort {
+                    name: "medium".into(),
+                    depths: vec![Depth::Routine, Depth::Focused],
+                    preference: 1,
+                },
+                CatalogEffort {
+                    name: "low".into(),
+                    depths: vec![Depth::Routine],
+                    preference: 0,
+                },
+            ]
+        } else {
+            vec![CatalogEffort {
+                name: name.into(),
+                depths,
+                preference: 0,
+            }]
+        },
         sources: vec![
             "bundled design policy; capability levels are declarations, not measurements".into(),
         ],

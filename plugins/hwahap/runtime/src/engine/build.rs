@@ -47,6 +47,13 @@ impl BuildRequest {
         plan.full_suite = self.full_suite.clone();
         plan.verification_inputs = self.verification_inputs.clone();
         plan.task_profiles = self.task_profiles.clone();
+        if let Some(profile) = plan.task_profiles.get_mut("run") {
+            match profile.topology.writer_owner.as_deref() {
+                None | Some("run") => profile.topology.writer_owner = Some(id.to_owned()),
+                Some(owner) if owner == id => {}
+                Some(_) => return Err(Error::Rejected("run writer belongs to another run".into())),
+            }
+        }
         for (index, unit) in self.units.iter().enumerate() {
             let n = index + 1;
             let (r, a, u) = (format!("R{n}"), format!("A{n}"), format!("U{n}"));

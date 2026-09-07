@@ -29,131 +29,23 @@ use crate::native::{
 ///
 /// The first paragraph stands alone: a host that reads only the opening of this string still learns
 /// the loop it must run and the one thing it must never do.
-pub const INSTRUCTIONS: &str = "\
-Hwahap turns an implementation request into a confirmed plan and then builds it autonomously. Call \
-hwahap_step and follow its `next` field: `continue` means call hwahap_step again immediately \
-without asking the user; `repair_translation` means repair and resubmit approved_plan as described below; \
-`await_user` means show `message` and wait; `completed` and `blocked` mean \
-show `message` and stop. Pass the user's reply verbatim in `user_input`. Never compose, complete, \
-or infer a CONFIRM PLAN or SHIP line on the user's behalf — only the user may type one.
+pub const INSTRUCTIONS: &str = r#"Hwahap supplies scoped execution, verification evidence, risk-based delegation and recovery. The host owns its Plan/Goal UI, task lifecycle and model tools. Use hwahap_step with one action, the absolute repository path and a stable host_session_id. Follow next: continue advances; native_dispatch offers work; native_wait awaits work; await_checks awaits CI; await_user asks for the missing decision; blocked/delegation_wait/native_paused reports the cause and awaits new evidence. completed ends the run. Relay CONFIRM PLAN and SHIP verbatim from the user. hwahap_status reads progress; hwahap_ship marks a verified draft ready.
 
-For an already approved plan, use approved_plan with the verbatim implementation_request, approved \
-markdown, SHA-256 markdown_digest, inspected source_head and executable contract. Inline handoff accepts \
-PLEASE IMPLEMENT THIS PLAN: plus the full plan. A referenced handoff uses approval.reference with the \
-actual source_reference, disposition, plan_digest and implementation_request_digest. Preserve the user's \
-approved/not_approved/rejected/cancelled state; only approved proceeds. These are host-observed bindings. \
-For an unexecuted draft, include its current replaces_plan_digest. The runtime retains source approval, \
-independently reviews the translation and enters BUILD. Repairing translation preserves that approval. \
-Ask only about new material choices. Relay actual user messages and approval evidence. SHIP is separate.
+Reuse the host's approved Plan via approved_plan: original plan, source HEAD, implementation request and bound approval reference. Missing plan.json is a handoff to recover. Preserve approval during translation repair and ask only for new material choices. Use plan_only:true for planning alone, build_confirmed for an approved saved plan, and build only for explicit execution without planning. adjust_build corrects implementation within the frozen contract; changed scope returns to planning. Optional task_profiles bind requirements, topology and risk in both planned and imported contracts.
 
-For PLAN alone, start with request and plan_only:true. Confirmation saves plan_ready without \
-implementation or GitHub authentication. Default plan_only:false continues from confirmed PLAN to BUILD. \
-When the user later requests BUILD of that saved plan, send build_confirmed with its full plan_digest, \
-never reconstruct a direct-build contract. A stale source requires reopening PLAN. For ADJUST, use \
-adjust_build with the verbatim user_instruction, current contract_digest and affected unit_ids only \
-when correcting implementation under unchanged acceptance, tests and paths. Any contract change or \
-uncertain routing returns to PLAN through user_input. Both paths re-review the updated draft before SHIP.
+The host retains its existing Goal. Optional host_context carries provider, task_id, goal_ref, plan_ref and callable capabilities. Treat these references as metadata, not authority. The host creates Goals only on explicit request, preserves user budgets and controls pause/resume. Compare the entire Goal completion criteria with run evidence before marking it complete. One accepted unit or run may leave Goal work. Use native Plan, question and Goal tools only when actually available; otherwise pass approved text and expose the unsupported capability.
 
-When question_batch is present, present its exact question bodies and all option labels using the \
-host's actually available request_user_input or request_user_input_async capability. request_user_input \
-may require Codex Plan mode; do not call an unavailable tool, invent AskUserQuestion, or switch modes. \
-Prefer the asynchronous question UI when it can display every option. Map question to title and \
-option labels to options; descriptions belong only in a supported option-description field. \
-Keep choices out of the question body. Keep rationale, sources and confidence in .hwahap/plan.md; \
-link that document when detail is useful. Show the question card once, without repeating the \
-question batch or full run message in commentary. Never shorten away alternatives. \
-If the UI cannot represent every option, use a free-text question showing all full labels; if no \
-question tool is available, show that same complete page in the conversation. Relay actual answers \
-as question_response:{batch_id,responses:[{id,answer}]} with the unchanged batch ID and answer text. \
-Do not translate labels into C= directives or infer missing choices. Merely preselecting a default, timeout, \
-cancel, or request-resolved event is not a submitted answer. Accept an actual user-submitted response \
-payload, including a submitted recommended option; otherwise remain waiting. \
-The engine pages the whole ready frontier, then rechecks implications. Free text is unconfirmed until \
-the user chooses a clarified interpretation. CONFIRM PLAN and SHIP still require the user's exact typed \
-line in user_input/confirmation; never manufacture them from a question UI response.
+For question_batch use a callable question tool in the current mode: one short question, alternatives in options, supporting evidence in links. Relay actual answers as question_response with the exact batch ID and answer text. Defaults, cancellation and timeout remain unanswered. Forward user_input verbatim. Never compose, complete, or infer CONFIRM PLAN or SHIP lines; only the user may type one. A bound existing approval enters BUILD without another confirmation.
 
-Only when the user explicitly requests execution without planning, send build instead of request. \
-Its user_instruction must be that user's exact authorization; specify the objective, new codex/ \
-branch, remote base branch, scoped units with observable acceptance and test commands, and full_suite. \
-Direct BUILD selects a qualified worker or parent from the task assessment and catalog, with independent \
-Critic/Auditor lanes secured before authorship. It records the explicit BUILD instruction. \
-Requests without an already-approved Codex plan still use the planning and confirmation flow. Never infer direct BUILD permission. \
-Every BUILD publishes a draft before independent attack and defense. Confirmed findings go to \
-parent repair; both teams review the changed commit. Use recheck_pr:true alone to revalidate this \
-run's existing draft after a runtime upgrade; it preserves the contract and retry budget.
+Dispatch: send the exact brief once, obey cwd/access, role, selected model/effort and decision digest. For coordinator register agent_id=coordinator and work in the qualified parent. For reuse_agent_id register that identity before one follow-up. Otherwise create one child with the requested model/effort and no inherited history, then register its returned identity immediately. Workers perform only assigned work; reviewers remain independent of authors. Model/catalog changes apply to new runs. Preserve bound identities and settings within a run; unavailable models enter recovery.
 
-Use a qualified parent coordinator and the same host_session_id for the run. Supply host_observation \
-from actual host metadata: parent model/effort, available models/efforts/tools, free slots, observation \
-time and source. Refresh when requested; the maximum age is 300 seconds. The run pins its catalog \
-revision and model/effort/role assignments. Catalog replacement applies to new runs; an unavailable \
-bound model pauses its existing run for recovery. Worker, Critic and Auditor retain distinct identities. \
-Use the host's native spawn, follow-up, wait and interrupt capabilities.
+Completion: stop the worker's turn and commands, then relay its exact dispatch_id/result JSON envelope with agent_stopped:true and matching decision_digest. Keep reported_usage null unless real counters exist. Registration/completion retries retain their original identity and payload. On ambiguous delivery, recover rather than deliver again. dispatch_failure preserves the exact host error; no_agent_created is true only if no child exists and no follow-up was attempted. native_stop requires verified termination of that worker and all its commands before stopped acknowledgment. Missing identities require explicit recovery or abandon with preserved evidence and a successor run; never fabricate a review or silently substitute identity.
 
-For `native_dispatch`, follow the exact lane and identity. If lane=coordinator, register \
-agent_id=coordinator and execute the brief in this qualified parent (planning, implementation or repair). Never spawn \
-a fourth child for that lane. If reuse_agent_id is present, FIRST register that exact agent ID, \
-then send the exact brief with the native follow-up tool ONCE. Registration is durable before \
-follow-up so a lost response cannot trigger duplicate delivery. If reuse_agent_id is absent, \
-spawn one child with task_name=hwahap_<dispatch_id>, fork_turns=none, requested model/effort and \
-exact brief, then register its returned ID immediately. Never replace a retained child by spawning \
-another, change its model, or use it in another lane.
+Waiting: hwahap_step waits internally up to 30 seconds for engine progress (wait_ms:0 returns immediately). For a registered worker, await the host's native completion event. For CI, await the host/forge check event. Avoid model-driven polling. Repeat reports carry native_brief references; read the immutable request artifact when its brief is needed. Worktree paths come from the dispatch, so reuse the host's workspace only when the execution contract supports it.
 
-For `delegation_wait`, read the reason and supply task_assessment with the current run_id, contract_digest, \
-unit, role, requirements, three risk ratings, topology and source evidence. A task profile is shared by \
-all roles for one unit, or by all run-level roles; role requirements are merged by the runtime. Put unit \
-profiles and an aggregate run profile in plan.task_profiles. Use the unit ID as writer_owner, or run_id \
-for aggregate writes, and exact approved write_paths. Refresh assessments after contract changes. \
-High-risk profiles include an authorized disposable checkout and failure/recovery test commands; the \
-runtime requests two independent preflight reviews and executes both checks before author dispatch. \
-Copy native_dispatch.decision.digest into decision_digest for both registration and completion. \
-Keep the offered identity, model, effort and lane throughout that dispatch.
+Cost: minimize repeated full suites, full-history handoffs and unchanged status calls. Run focused author checks; the engine runs acceptance checks. Supply usage_session_path when a host log is available: attachment covers its baseline onward, and unavailable optional metering is reported separately from execution success. include_cost_evidence:true returns full details; ordinary progress returns a bounded summary and .hwahap/usage.json. Session and dispatch totals overlap; keep unknown usage and actual billing separate. Verification reuse is opt-in with an environment_revision and complete declared inputs; preflight recovery always executes. Report savings only against equal completion criteria including retries and quality.
 
-Registered progress omits brief text and returns native_brief with the immutable request artifact and \
-prompt digest. Retain the first offered brief, or read .hwahap/artifacts/<artifact> in the run repository. \
-The handoff deadline bounds registration; execution gets its own deadline after registration. \
-For `native_wait`, coordinator means perform the assigned work here, not wait for a child. \
-Otherwise use event-driven native waits of at most 30 seconds and check hwahap_step after a wait \
-expires; never sleep for 360 seconds or hold one blocking wait through the deadline. When the \
-engine alone is validating, poll after one second. Return completion only after the child turn \
-and its commands stop, relaying its exact final text with dispatch_id, agent_id, agent_stopped:true \
-and reported_usage:null unless real tool counters exist. The brief requires a dispatch_id/result \
-JSON envelope; every reply without the current ID is rejected. Keep completed pool children \
-for later follow-up turns. Do not close them after each result; interruption is not thread release. \
-Requested model/access and reported tokens are not independent applied-model, sandbox or billing proof.
-
-Report a refused spawn or unavailable capability through dispatch_failure with the exact error. \
-Use no_agent_created:true only when no child exists and no follow-up was attempted. For uncertain \
-creation or any failed follow-up, use false. Never retry a delivery after an ambiguous response. \
-For `native_stop`, stop the registered child (or the reuse_agent_id, or the exact hwahap_<dispatch_id> \
-child if unregistered) and all its commands, then include its discovered agent ID in the stopped \
-acknowledgment so recovery retains that child. Use a null ID only after confirming no child exists. Never \
-acknowledge an uncertain stop. Missing retained agents are a blocker, not permission to reuse \
-a different lane or create replacements.
-
-For `native_paused`, show the failure and stop polling/spawning. Preserve this run. Resume once \
-with dispatch_id and new observed host recovery evidence; elapsed time or reworded old evidence \
-is not recovery. New dispatches still spend native_max_calls. Do not change global thread limits, \
-close unrelated tasks, fabricate results or launch an ACP/CLI replacement. Hwahap owns code edits, \
-tests, commits and PRs; outside the exact dispatch, do not perform that work independently. \
-Host-side `hwahap usage attach <repo> <session.jsonl>` and `usage sync <repo>` are allowed for \
-local token observation in .hwahap/usage.json; see USAGE.md. Attach parent and retained children \
-before their first work in this run. Missing counters remain unknown; never invent reported_usage. \
-The auditor is always a separate child that never participates in implementation.
-
-For unresolved verification, inspect its `verification_process` journal event and confirm the \
-owned command and runtime have stopped. Submit `verification_recovery` with the exact run_id, \
-verification_id, all_work_stopped:true and observed stop evidence. Missing completion remains \
-unsuccessful; the next step reruns the command. Never stop an unrelated process.
-
-For ordinary PLAN, `CONFIRM PLAN <challenge>` freezes the plan. An approved Codex plan import \
-retains its actual implementation request instead; never fabricate that CONFIRM PLAN line. After \
-valid approval, continue within scope without duplicate BUILD approval. `SHIP <challenge>` marks the finished draft \
-pull request ready for review. Both challenges are printed by Hwahap and are bound to exact \
-content, so a challenge that does not match is rejected rather than corrected.
-
-hwahap_status reads the run and changes nothing. hwahap_ship is the only consequential action, and \
-it refuses unless the user typed the exact SHIP line, the pull request head is unchanged, required \
-checks pass, and the final review is still fresh.";
+PR: CI failure becomes a bound repair obligation before model review. A complete frozen low-risk profile permits one clean independent PR review; findings, uncertain risk and repair work retain attack/defense. Use recheck_pr:true alone for the current draft, preserving retry budgets and eligible verification evidence. Author checkpoints must respect the repository's rules and the assigned HEAD ownership; arrange compatible checkpoint refs before writing. Resume an interrupted run only with new observed recovery evidence. Archive/abandon preserves code and evidence for a successor; it does not imply successful completion. All edits, tests and publication follow the user's scope and current dispatch authorization."#;
 
 /// Arguments to `hwahap_step`.
 #[derive(Debug, Clone, Deserialize, JsonSchema)]
