@@ -151,6 +151,12 @@ pub fn elapsed_since_offer(store: &Store, id: &str) -> Result<Option<u64>> {
         .and_then(|v| elapsed_at(v.offered_at_ms, chrono::Utc::now().timestamp_millis())))
 }
 
+pub fn elapsed_since_registration(store: &Store, id: &str) -> Result<Option<u64>> {
+    Ok(read(store, id)?
+        .and_then(|v| v.registered_at_ms)
+        .and_then(|start| elapsed_at(start, chrono::Utc::now().timestamp_millis())))
+}
+
 fn elapsed_at(offered: i64, now: i64) -> Option<u64> {
     now.checked_sub(offered)
         .and_then(|ms| u64::try_from(ms).ok())
@@ -167,7 +173,7 @@ mod tests {
         let id = "b".repeat(64);
         let dispatch: super::super::NativeDispatch =
             serde_json::from_value(serde_json::json!({
-                "dispatch_id": id, "run_id": "r", "role": "fact_finder", "profile": "economy",
+                "dispatch_id": id, "run_id": "r", "role": "fact_finder","assessment":crate::delegation::test_payload().0,"decision":crate::delegation::test_payload().1,"selection":{"run_id":"run","host_session_id":"parent","role":"recommender","unit":null,"model":"m","effort":"high","requirements":{"capabilities":{},"depth":"deep"},"tools":[],"catalog_digest":"catalog","host_digest":"host","digest":"selection"}, "profile": "economy",
                 "model": "m", "effort": "medium", "cwd": "/tmp", "access": "read_only",
                 "coordinator_allowed": false, "prompt_digest": "p", "base_head": "h",
                 "brief": "facts", "stop_required": false, "pool_scope":"parent", "lane":"worker", "soft_budget_secs":60, "hard_timeout_secs":180

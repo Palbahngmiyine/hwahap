@@ -11,6 +11,8 @@ use crate::state::Store;
 
 mod broker;
 pub use broker::NativeSessions;
+mod abandon;
+pub use abandon::AbandonRequest;
 mod host;
 pub use host::{NativeHost, NativeInput, NativeProgress};
 mod failure;
@@ -27,6 +29,9 @@ const PENDING: &str = "native-pending.json";
 #[serde(deny_unknown_fields)]
 pub struct NativeDispatch {
     pub dispatch_id: String,
+    pub selection: crate::catalog::Selection,
+    pub decision: crate::delegation::DelegationDecision,
+    pub assessment: crate::delegation::TaskAssessment,
     pub run_id: String,
     pub role: String,
     pub profile: String,
@@ -55,10 +60,41 @@ pub struct NativeDispatch {
     pub hard_timeout_secs: u64,
 }
 
+impl NativeDispatch {
+    pub fn verify_decision(&self) -> Result<()> {
+        self.decision.verify()?;
+        self.selection.verify()?;
+        self.assessment.validate()?;
+        if self.decision.selection.as_ref() != Some(&self.selection)
+            || self.decision.assessment_digest != Some(self.assessment.digest()?)
+            || self.decision.task_digest != Some(self.assessment.task_digest()?)
+            || self.decision.catalog_digest != self.selection.catalog_digest
+            || self.decision.host_digest.as_ref() != Some(&self.selection.host_digest)
+            || self.decision.lane != self.lane
+            || self.model != self.selection.model
+            || self.effort != self.selection.effort
+            || self.role != self.selection.role
+            || self.unit != self.selection.unit
+            || self.run_id != self.selection.run_id
+            || self.assessment.role.as_str() != self.role
+            || self.assessment.unit != self.unit
+            || self.assessment.run_id != self.run_id
+            || self.coordinator_allowed != (self.lane == NativeLane::Coordinator)
+        {
+            return Err(Error::Rejected(
+                "native decision identity, model or effort differs".into(),
+            ));
+        }
+        Ok(())
+    }
+}
+
 /// Persist the child identity immediately after spawn, before waiting for its answer.
 #[derive(Debug, Clone, Deserialize, Serialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct NativeRegistration {
+    #[serde(default)]
+    pub decision_digest: Option<String>,
     pub dispatch_id: String,
     pub agent_id: String,
 }
@@ -67,6 +103,8 @@ pub struct NativeRegistration {
 #[derive(Debug, Clone, Deserialize, Serialize, JsonSchema, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
 pub struct NativeCompletion {
+    #[serde(default)]
+    pub decision_digest: Option<String>,
     pub dispatch_id: String,
     pub agent_id: String,
     pub final_message: String,
@@ -153,6 +191,15 @@ pub(super) fn check_stopped(store: &Store, ack: &NativeStopped) -> Result<Pendin
         pending.dispatch.agent_id = Some(id.clone());
     }
     Ok(pending)
+}
+
+pub fn require_stopped(store: &Store) -> Result<()> {
+    if load(store)?.is_some_and(|pending| pending.completion.is_none()) {
+        return Err(Error::Rejected(
+            "native stop acknowledgment is required before candidate recovery".into(),
+        ));
+    }
+    Ok(())
 }
 
 pub fn acknowledge_stopped(store: &Store, ack: &NativeStopped) -> Result<()> {

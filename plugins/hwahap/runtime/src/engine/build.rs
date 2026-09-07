@@ -16,6 +16,11 @@ pub struct BuildRequest {
     pub branch: String,
     pub units: Vec<BuildUnit>,
     pub full_suite: String,
+    /// Repository-relative test inputs, including ignored fixtures.
+    #[serde(default)]
+    pub verification_inputs: Vec<String>,
+    #[serde(default)]
+    pub task_profiles: std::collections::BTreeMap<String, crate::delegation::TaskProfile>,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize, JsonSchema)]
@@ -40,6 +45,15 @@ impl BuildRequest {
         plan.execution_authorization = Some(self.user_instruction.clone());
         plan.base_commit = Some(base_commit.into());
         plan.full_suite = self.full_suite.clone();
+        plan.verification_inputs = self.verification_inputs.clone();
+        plan.task_profiles = self.task_profiles.clone();
+        if let Some(profile) = plan.task_profiles.get_mut("run") {
+            match profile.topology.writer_owner.as_deref() {
+                None | Some("run") => profile.topology.writer_owner = Some(id.to_owned()),
+                Some(owner) if owner == id => {}
+                Some(_) => return Err(Error::Rejected("run writer belongs to another run".into())),
+            }
+        }
         for (index, unit) in self.units.iter().enumerate() {
             let n = index + 1;
             let (r, a, u) = (format!("R{n}"), format!("A{n}"), format!("U{n}"));
@@ -261,6 +275,7 @@ impl super::Engine {
             reviewed_head: None,
             seq: 0,
         };
+        crate::catalog::pin(&self.store, &*self.clock, &run.run_id)?;
         self.store.write_run(&*self.clock, &run)?;
         Ok(self.report(&run, "BUILD started from the recorded explicit instruction. Planning was omitted; scope, tests and independent review remain required.".into()))
     }
@@ -272,6 +287,8 @@ mod tests {
 
     fn request() -> BuildRequest {
         BuildRequest {
+            task_profiles: Default::default(),
+            verification_inputs: vec![],
             user_instruction: "Skip planning and implement the requested check".into(),
             objective: "Validate settings".into(),
             base_branch: "main".into(),

@@ -16,12 +16,15 @@ fn request(f: &Fixture) -> ApprovedPlanRequest {
     let instruction = format!("PLEASE IMPLEMENT THIS PLAN:\n{markdown}");
     ApprovedPlanRequest {
         approval: PlanApproval {
+            reference: None,
             markdown: markdown.into(),
             markdown_digest: Digest::of_bytes(markdown.as_bytes()).to_string(),
             implementation_request: instruction.clone(),
             source_head: git(&f.repo, &["rev-parse", "HEAD"]),
         },
         contract: BuildRequest {
+            task_profiles: Default::default(),
+            verification_inputs: vec![],
             user_instruction: instruction,
             objective: "Create feature".into(),
             base_branch: "main".into(),
@@ -36,6 +39,22 @@ fn request(f: &Fixture) -> ApprovedPlanRequest {
         },
         replaces_plan_digest: None,
     }
+}
+
+#[test]
+fn t04_invalid_verification_preserves_the_existing_draft() {
+    let f = Fixture::new();
+    let mut input = request(&f);
+    f.engine().start_planning("Existing draft", false).unwrap();
+    let store = Store::open(&f.repo).unwrap();
+    let before = store.read_plan().unwrap().unwrap();
+    let history = store.read_events().unwrap();
+    input.replaces_plan_digest = Some(before.digest().unwrap().to_string());
+    input.contract.units[0].test_command.clear();
+    assert!(f.engine().register_approved_plan(&input).is_err());
+    assert_eq!(store.read_plan().unwrap().unwrap(), before);
+    assert_eq!(store.read_events().unwrap(), history);
+    assert!(!f.worktree().exists());
 }
 
 #[tokio::test]
@@ -102,7 +121,7 @@ async fn rejected_translation_retains_approval_without_creating_a_worktree() {
         step(
             Role::ColdConsumer,
             Reply::say(
-                r#"{"verdict":"fail","findings":["A missing condition needs contract repair"]}"#,
+                r#"{"verdict":"fail","findings":[{"id":"CC1","parent_id":null,"kind":"structure","targets":["U1"],"evidence":["A missing condition needs contract repair"],"expected":"A missing condition needs contract repair","status":"open","depends_on":[]}]}"#,
             ),
         ),
         step(
@@ -173,7 +192,9 @@ async fn translation_repair_keeps_approval_and_exposes_all_execution_fields_to_r
     let script = Script::new(vec![
         step(
             Role::ColdConsumer,
-            Reply::say(r#"{"verdict":"fail","findings":["Test must reject incorrect content"]}"#),
+            Reply::say(
+                r#"{"verdict":"fail","findings":[{"id":"CC1","parent_id":null,"kind":"structure","targets":["U1"],"evidence":["Test must reject incorrect content"],"expected":"Test must reject incorrect content","status":"open","depends_on":[]}]}"#,
+            ),
         ),
         step(
             Role::PlanCritic,
@@ -205,6 +226,27 @@ async fn translation_repair_keeps_approval_and_exposes_all_execution_fields_to_r
     assert_eq!(repaired.approved_plan, before.approved_plan);
     assert!(repaired.reviews.cold_consumer.is_none());
     assert_eq!(repaired.revision, before.revision + 1);
+    assert_eq!(repaired.planning_findings.len(), 1);
+    assert_eq!(
+        repaired.planning_findings[0].id,
+        before.planning_findings[0].id
+    );
+    assert_eq!(
+        repaired.decomposition_history.last().unwrap().action,
+        "translation_resubmitted"
+    );
+    assert!(!hwahap::validate::approved_plan_blockers(&repaired)
+        .unwrap()
+        .is_empty());
+    let missing_resolution = Script::new(vec![step(
+        Role::ColdConsumer,
+        Reply::say(r#"{"verdict":"pass","findings":[]}"#),
+    )]);
+    assert!(engine
+        .step_with(&missing_resolution, None, None)
+        .await
+        .is_err());
+    assert!(!f.worktree().exists());
 }
 
 #[tokio::test]

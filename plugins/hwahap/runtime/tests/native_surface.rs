@@ -1,5 +1,6 @@
 //! Real Git and durable storage with a controlled host; no model access is implied.
 #![cfg(unix)]
+mod common;
 
 use std::sync::Arc;
 use std::time::Duration;
@@ -9,7 +10,7 @@ use hwahap::native::{
     acknowledge_stopped, orphan, NativeCompletion, NativeDispatch, NativeRegistration,
     NativeSessions, NativeStopped,
 };
-use hwahap::profile::{Profiles, Role};
+use hwahap::profile::Role;
 use hwahap::session::SessionSpec;
 use hwahap::state::Store;
 
@@ -76,13 +77,15 @@ async fn fixture(
         .step(Some("Inspect this repository"), None)
         .await
         .unwrap();
+    let store = Store::open(temp.path()).unwrap();
+    common::fixture_native_observation(&store, &store.read_run().unwrap().unwrap().run_id);
     let broker = Arc::new(NativeSessions::new(
         Store::open(temp.path()).unwrap(),
-        Profiles::defaults(),
         max_calls,
         timeout,
     ));
     let spec = SessionSpec {
+        assessment: None,
         cwd: temp.path().into(),
         role: Role::FactFinder,
         unit: None,
@@ -116,6 +119,7 @@ async fn registered_result_is_durable_bound_and_consumed_once() {
     assert_eq!(request.lane, hwahap::native::NativeLane::Worker);
     assert!(!request.base_head.is_empty());
     let mut completion = NativeCompletion {
+        decision_digest: Some(request.decision.digest.clone()),
         dispatch_id: request.dispatch_id.clone(),
         agent_id: "child-1".into(),
         final_message: serde_json::json!({"dispatch_id":request.dispatch_id,"result":{"facts":[]}})
@@ -129,6 +133,7 @@ async fn registered_result_is_durable_bound_and_consumed_once() {
     );
     broker
         .register(&NativeRegistration {
+            decision_digest: Some(request.decision.digest.clone()),
             dispatch_id: request.dispatch_id.clone(),
             agent_id: "child-1".into(),
         })
@@ -155,6 +160,7 @@ async fn registered_result_is_durable_bound_and_consumed_once() {
     broker.finish().unwrap();
     assert!(orphan(&store).unwrap().is_none());
     let spec = SessionSpec {
+        assessment: None,
         cwd: temp.path().into(),
         role: Role::FactFinder,
         unit: None,
@@ -182,11 +188,13 @@ async fn completion_write_failures_do_not_deliver_and_exact_retry_delivers_once(
         let request = broker.dispatch().unwrap().unwrap();
         broker
             .register(&NativeRegistration {
+                decision_digest: Some(request.decision.digest.clone()),
                 dispatch_id: request.dispatch_id.clone(),
                 agent_id: "child-1".into(),
             })
             .unwrap();
         let completion = NativeCompletion {
+            decision_digest: Some(request.decision.digest.clone()),
             dispatch_id: request.dispatch_id.clone(),
             agent_id: "child-1".into(),
             final_message:
@@ -246,6 +254,7 @@ async fn restart_requires_exact_stop_acknowledgment_before_recovery() {
     let request = dispatch(&broker).await;
     broker
         .register(&NativeRegistration {
+            decision_digest: Some(request.decision.digest.clone()),
             dispatch_id: request.dispatch_id.clone(),
             agent_id: "child-1".into(),
         })
@@ -294,6 +303,7 @@ async fn timing_immediate_completion_does_not_wait_for_the_hard_deadline() {
     assert_eq!(request.hard_timeout_secs, 180);
     broker
         .register(&NativeRegistration {
+            decision_digest: Some(request.decision.digest.clone()),
             dispatch_id: request.dispatch_id.clone(),
             agent_id: "fast-child".into(),
         })
@@ -301,7 +311,8 @@ async fn timing_immediate_completion_does_not_wait_for_the_hard_deadline() {
     let message = r#"{"facts":[]}"#;
     broker
         .complete(NativeCompletion {
-            dispatch_id: request.dispatch_id.clone(),
+            decision_digest: Some(request.decision.digest.clone()),
+dispatch_id: request.dispatch_id.clone(),
             agent_id: "fast-child".into(),
             final_message: serde_json::json!({"dispatch_id":request.dispatch_id,"result":serde_json::from_str::<serde_json::Value>(message).unwrap()}).to_string(),
             agent_stopped: true,
@@ -334,6 +345,7 @@ async fn timing_short_deadline_keeps_a_registered_child_behind_the_stop_barrier(
     let request = dispatch(&broker).await;
     broker
         .register(&NativeRegistration {
+            decision_digest: Some(request.decision.digest.clone()),
             dispatch_id: request.dispatch_id.clone(),
             agent_id: "slow-child".into(),
         })
@@ -430,6 +442,7 @@ async fn coordinator_is_limited_to_astra_planning_roles() {
     assert!(request.coordinator_allowed);
     broker
         .register(&NativeRegistration {
+            decision_digest: Some(request.decision.digest.clone()),
             dispatch_id: request.dispatch_id.clone(),
             agent_id: "coordinator".into(),
         })
@@ -440,6 +453,7 @@ async fn coordinator_is_limited_to_astra_planning_roles() {
     ] {
         assert!(broker
             .complete(NativeCompletion {
+                decision_digest: Some(request.decision.digest.clone()),
                 dispatch_id: request.dispatch_id.clone(),
                 agent_id: "coordinator".into(),
                 final_message: text,
@@ -453,6 +467,7 @@ async fn coordinator_is_limited_to_astra_planning_roles() {
     .to_string();
     broker
         .complete(NativeCompletion {
+            decision_digest: Some(request.decision.digest.clone()),
             dispatch_id: request.dispatch_id,
             agent_id: "coordinator".into(),
             final_message: envelope,
@@ -472,6 +487,7 @@ async fn coordinator_is_limited_to_astra_planning_roles() {
     assert!(!request.coordinator_allowed);
     assert!(broker
         .register(&NativeRegistration {
+            decision_digest: Some(request.decision.digest.clone()),
             dispatch_id: request.dispatch_id,
             agent_id: "coordinator".into()
         })
@@ -484,16 +500,19 @@ async fn coordinator_is_limited_to_astra_planning_roles() {
 async fn incompatible_coordinator_model_is_rejected_before_dispatch() {
     let (temp, _, mut spec) = fixture(5, 30).await;
     spec.role = Role::Recommender;
-    let profiles = Profiles::from_toml(
-        "[profiles.economy]\nmodel = 'gpt-5.6-luna'\neffort = 'medium'\n\
-         [profiles.critic]\nmodel = 'gpt-6-astra'\neffort = 'high'\n\
-         [profiles.deep]\nmodel = 'other-model'\neffort = 'high'\n",
+    let store = Store::open(temp.path()).unwrap();
+    let mut observed = hwahap::catalog::host::latest(&store).unwrap().unwrap();
+    observed.parent_model = "other-model".into();
+    hwahap::catalog::host::observe(
+        &store,
+        &hwahap::clock::SystemClock,
+        &observed.host_session_id,
+        &observed,
     )
     .unwrap();
-    let store = Store::open(temp.path()).unwrap();
-    let broker = NativeSessions::new(store.clone(), profiles, 5, 30);
+    let broker = NativeSessions::new(store.clone(), 5, 30);
     let error = broker.execute(&spec).await.unwrap_err().to_string();
-    assert!(error.contains("Astra parent"), "{error}");
+    assert!(error.contains("bound_capability_insufficient"), "{error}");
     assert!(broker.dispatch().unwrap().is_none());
     assert!(orphan(&store).unwrap().is_none());
     assert_eq!(
@@ -508,6 +527,7 @@ async fn host_dispatch(
 ) -> NativeDispatch {
     tokio::time::timeout(Duration::from_secs(5), async {
         loop {
+            common::fixture_assessments(&hwahap::state::Store::open(root).unwrap());
             let result = host
                 .advance(root, hwahap::native::NativeInput::default())
                 .await
@@ -554,6 +574,7 @@ async fn host_polling_preserves_one_dispatch_and_excludes_a_second_server() {
         temp.path(),
         NativeInput {
             registration: Some(NativeRegistration {
+                decision_digest: Some(request.decision.digest.clone()),
                 dispatch_id: request.dispatch_id.clone(),
                 agent_id: "native-1".into(),
             }),
@@ -608,6 +629,7 @@ async fn stop_ack_keeps_lock_and_pending_until_task_cancellation_finishes() {
         temp.path(),
         NativeInput {
             registration: Some(NativeRegistration {
+                decision_digest: Some(request.decision.digest.clone()),
                 dispatch_id: request.dispatch_id.clone(),
                 agent_id: "child-1".into(),
             }),
@@ -658,6 +680,7 @@ async fn host_consumes_registered_output_and_accepts_identical_replay() {
         temp.path(),
         NativeInput {
             registration: Some(NativeRegistration {
+                decision_digest: Some(request.decision.digest.clone()),
                 dispatch_id: request.dispatch_id.clone(),
                 agent_id: "native-1".into(),
             }),
@@ -666,7 +689,8 @@ async fn host_consumes_registered_output_and_accepts_identical_replay() {
     )
     .await
     .unwrap();
-    let completion = NativeCompletion { dispatch_id: request.dispatch_id.clone(), agent_id: "native-1".into(), final_message: serde_json::json!({"dispatch_id":request.dispatch_id,"result":serde_json::from_str::<serde_json::Value>(r#"{"facts":[{"id":"F1","question":"what exists?","answer":"README.md exists","sources":["README.md:1"]}]}"#).unwrap()}).to_string(), agent_stopped: true, reported_usage: None };
+    let completion = NativeCompletion { decision_digest: Some(request.decision.digest.clone()),
+dispatch_id: request.dispatch_id.clone(), agent_id: "native-1".into(), final_message: serde_json::json!({"dispatch_id":request.dispatch_id,"result":serde_json::from_str::<serde_json::Value>(r#"{"facts":[{"id":"F1","question":"what exists?","answer":"README.md exists","sources":["README.md:1"]}]}"#).unwrap()}).to_string(), agent_stopped: true, reported_usage: None };
     host.advance(
         temp.path(),
         NativeInput {
@@ -712,6 +736,7 @@ async fn native_fact_finder_ignores_runtime_writes_but_detects_user_file_changes
             temp.path(),
             NativeInput {
                 registration: Some(NativeRegistration {
+                    decision_digest: Some(request.decision.digest.clone()),
                     dispatch_id: request.dispatch_id.clone(),
                     agent_id: "reader".into(),
                 }),
@@ -727,13 +752,17 @@ async fn native_fact_finder_ignores_runtime_writes_but_detects_user_file_changes
         }
         let mut progress = host.advance(temp.path(), NativeInput {
             completion: Some(NativeCompletion {
-                dispatch_id: request.dispatch_id.clone(), agent_id: "reader".into(),
+                decision_digest: Some(request.decision.digest.clone()),
+dispatch_id: request.dispatch_id.clone(), agent_id: "reader".into(),
                 final_message: serde_json::json!({"dispatch_id":request.dispatch_id,"result":serde_json::from_str::<serde_json::Value>(r#"{"facts":[{"id":"F1","question":"what exists?","answer":"README.md","sources":["README.md:1"]}]}"#).unwrap()}).to_string(),
                 agent_stopped: true, reported_usage: None,
             }), ..Default::default()
         }).await.unwrap();
         tokio::time::timeout(Duration::from_secs(5), async {
             while progress.dispatch.is_none() && progress.outcome.next != "blocked" {
+                if progress.outcome.next == "delegation_wait" {
+                    common::fixture_assessments(&Store::open(temp.path()).unwrap());
+                }
                 tokio::task::yield_now().await;
                 progress = host
                     .advance(temp.path(), NativeInput::default())
@@ -777,4 +806,69 @@ async fn fingerprint_excludes_only_root_runtime_and_observes_untracked_modes() {
     let mode = std::fs::metadata(&nested).unwrap().permissions().mode();
     std::fs::set_permissions(&nested, std::fs::Permissions::from_mode(mode ^ 0o100)).unwrap();
     assert_ne!(git.fingerprint(temp.path()).unwrap(), with_nested);
+}
+
+#[tokio::test]
+async fn t14_execution_deadline_starts_at_registration_after_bounded_handoff() {
+    use hwahap::engine::Sessions;
+    let (_temp, broker, spec) = fixture(8, 2).await;
+    let runner = broker.clone();
+    let task = tokio::spawn(async move { runner.run(&spec).await });
+    let request = dispatch(&broker).await;
+    tokio::time::sleep(Duration::from_millis(1200)).await;
+    broker
+        .register(&NativeRegistration {
+            dispatch_id: request.dispatch_id.clone(),
+            agent_id: "late-worker".into(),
+            decision_digest: Some(request.decision.digest.clone()),
+        })
+        .unwrap();
+    tokio::time::sleep(Duration::from_millis(1200)).await;
+    assert!(
+        !task.is_finished(),
+        "handoff time consumed the execution deadline"
+    );
+    broker
+        .complete(NativeCompletion {
+            dispatch_id: request.dispatch_id.clone(),
+            agent_id: "late-worker".into(),
+            decision_digest: Some(request.decision.digest.clone()),
+            final_message:
+                serde_json::json!({"dispatch_id":request.dispatch_id,"result":{"facts":[]}})
+                    .to_string(),
+            agent_stopped: true,
+            reported_usage: None,
+        })
+        .unwrap();
+    task.await.unwrap().unwrap();
+    broker.finish().unwrap();
+}
+
+#[tokio::test]
+async fn host_wait_wakes_for_offered_dispatch_without_model_polling() {
+    use hwahap::native::{NativeHost, NativeInput};
+    let (temp, _, _) = fixture(5, 30).await;
+    let host = NativeHost::default();
+    common::fixture_assessments(&Store::open(temp.path()).unwrap());
+    host.advance(temp.path(), NativeInput::default())
+        .await
+        .unwrap();
+    tokio::time::timeout(Duration::from_secs(3), host.wait_ready(temp.path(), 30_000))
+        .await
+        .unwrap();
+    let result = host
+        .advance(temp.path(), NativeInput::default())
+        .await
+        .unwrap();
+    assert!(result.dispatch.is_some());
+    host.shutdown().await;
+}
+
+#[test]
+fn cost_progress_is_bounded_and_detailed_evidence_stays_available() {
+    let value = serde_json::json!({"total":{"requests":100},"total_billed_cost":"unknown","limits":"overlapping counters", "evaluation":{"model_selections":vec!["x".repeat(1000);100]}});
+    let compact = hwahap::cost::for_report(value.clone(), false);
+    assert!(serde_json::to_vec(&compact).unwrap().len() < 1000);
+    assert_eq!(compact["total"]["requests"], 100);
+    assert_eq!(hwahap::cost::for_report(value.clone(), true), value);
 }

@@ -165,14 +165,17 @@ impl Forge {
     /// A pending check is not a success: shipping on a green-so-far run would bind the plan to a
     /// verification that had not finished.
     pub fn checks_passed(&self, cwd: &Path, pr: &str) -> Result<bool> {
+        Ok(self.check_results(cwd, pr)?.iter().all(check_succeeded))
+    }
+
+    pub fn check_results(&self, cwd: &Path, pr: &str) -> Result<Vec<serde_json::Value>> {
         let json = self.run(cwd, &["pr", "view", pr, "--json", "statusCheckRollup"])?;
         let value: serde_json::Value = serde_json::from_str(&json)
             .map_err(|e| Error::command("gh", format!("pr view returned invalid JSON: {e}")))?;
-        let Some(checks) = value.get("statusCheckRollup").and_then(|v| v.as_array()) else {
-            // No rollup at all means no checks are configured; there is nothing to be green.
-            return Ok(true);
-        };
-        Ok(checks.iter().all(check_succeeded))
+        match value.get("statusCheckRollup") {
+            Some(serde_json::Value::Array(checks)) => Ok(checks.clone()),
+            _ => Err(Error::command("gh", "missing CI result array")),
+        }
     }
 
     /// Marks the draft pull request ready for review.
@@ -207,7 +210,7 @@ impl Forge {
 /// The rollup mixes two shapes: check runs carry `conclusion`, legacy commit statuses carry
 /// `state`. Anything unrecognized is treated as not-passing, because an unknown check is not a
 /// green one.
-fn check_succeeded(check: &serde_json::Value) -> bool {
+pub(crate) fn check_succeeded(check: &serde_json::Value) -> bool {
     if let Some(conclusion) = check.get("conclusion").and_then(|v| v.as_str()) {
         return matches!(conclusion, "SUCCESS" | "NEUTRAL" | "SKIPPED");
     }

@@ -129,13 +129,12 @@ material product or technical decision you would still have to invent.
 
 # Result contract
 
-Use `verdict: \"pass\"` only when you needed no new decision. Otherwise `verdict: \"fail\"` with one
-finding per missing decision, each naming the unit and the exact question the plan leaves open.
+Classify every actionable gap as choice, fact, structure or blocker.
 
 Your final message must be exactly this JSON object and nothing else:
 {contract}",
         plan = quoted(plan_markdown),
-        contract = ReviewResult::CONTRACT
+        contract = crate::planning_review::PlanningReviewResult::CONTRACT
     )
 }
 
@@ -225,6 +224,11 @@ apply; the user confirms that separately.
 
 ## Rules for each decision you propose
 
+- Write `question` as one short sentence asking for one material choice (aim for 100 characters).
+- Write each alternative `value` as a short, distinct outcome (aim for 40 characters).
+  Put option-specific outcomes in alternatives, and essential shared context in the question.
+  Keep rationale, sources, confidence and trade-offs in their structured recommendation fields.
+  Preserve material meaning when more words are necessary; never truncate an existing choice.
 - Two or more alternatives that are genuinely different, not a rephrasing of each other.
 - Make the desired and undesired outcomes explicit in the question and alternatives. For example,
   ask what happens to an existing file: preserve its bytes or replace them; do not ask merely
@@ -296,6 +300,8 @@ pub fn structure(plan: &Plan) -> String {
         "{COMMON}
 
 # Your job: turn these settled decisions into a graph that can be built
+
+For each unit, populate task_profiles with requirements (capabilities 0..3 and depth routine/focused/deep), risk (failure_cost, reversibility, blast_radius: 0..2, where 2 is high cost/hard to undo/broad impact), topology (predecessors, coupling independent/shared, shared_resources, writer_owner, separable, write_paths), source evidence, and recovery (null or environment/user_authorization/failure_command/recovery_command). Use unit IDs as keys and run for the aggregate task. Base coupling on source evidence and shared mutable resources. Match writer_owner and write_paths to the unit contract. Reviewers assess these profiles independently. Missing evidence requires a fact investigation. High risk requires an approved disposable checkout and executable failure/recovery checks before implementation.
 
 Goal: {goal}
 
@@ -380,7 +386,7 @@ that facts are true merely because they have citations, or that no misunderstand
 Your final message must be exactly this JSON object and nothing else:
 {contract}",
         plan = quoted(plan_markdown),
-        contract = ReviewResult::CONTRACT
+        contract = crate::planning_review::PlanningReviewResult::CONTRACT
     )
 }
 
@@ -453,6 +459,36 @@ the plan above does not contain. Put the exact conflicting plan detail in `confl
 }
 
 /// Asks Critic to review one unit's diff, read-only.
+/// Review dependency impact on a completed unit after its fixed tests run again.
+pub fn revalidation_review(
+    plan: &Plan,
+    unit: &Unit,
+    head: &str,
+    evidence: &str,
+    diff: &str,
+) -> String {
+    format!("{COMMON}
+
+# Your job: independently review dependency impact on {id}
+
+Read the current candidate at HEAD {head}. This unit's contract was implemented previously and its fixed tests just passed again.
+Changes by other units are inputs to this impact review. Evaluate whether the current candidate still satisfies this unit's acceptance and selected behavior.
+Report concrete dependency regressions, missing coverage or violated invariants as fail. Keep the worktree unchanged.
+
+## Required behavior
+{acceptance}
+## Selected decisions
+{decisions}
+## Prior implementation and current verification evidence
+{evidence}
+## Changes since implementation
+{diff}
+## Result contract
+Return exactly this JSON object:
+{contract}", id=unit.id, acceptance=acceptance_for(plan,unit), decisions=decisions_for(plan,unit),
+        evidence=quoted(evidence), diff=quoted(diff), contract=ReviewResult::CONTRACT)
+}
+
 pub fn unit_reviewer(plan: &Plan, unit: &Unit, diff: &str) -> String {
     format!(
         "{COMMON}
@@ -618,7 +654,7 @@ Your final message must be exactly this JSON object and nothing else:
 /// inside it can close it and go on writing the brief at column zero. Callers put Hwahap's own
 /// instructions after the block as well: a forged section arriving last would otherwise be the last
 /// thing the model reads.
-fn quoted(span: &str) -> String {
+pub(crate) fn quoted(span: &str) -> String {
     let fence = "`".repeat(longest_backtick_run(span).max(2) + 1);
     format!("{DATA_NOTICE}\n\n{fence}\n{span}\n{fence}")
 }
@@ -888,9 +924,9 @@ mod tests {
         let plan = plan_with_one_unit();
         let unit = plan.unit("U1").unwrap();
         let prompts = [
-            fact_finder("q"),
             cold_consumer("plan"),
             plan_critic("plan"),
+            fact_finder("q"),
             implementer(&plan, unit, &[]),
             unit_reviewer(&plan, unit, "diff"),
             failure_diagnosis(unit, 3, "evidence"),
@@ -917,8 +953,6 @@ mod tests {
         let plan = plan_with_one_unit();
         let unit = plan.unit("U1").unwrap();
         for prompt in [
-            cold_consumer("plan"),
-            plan_critic("plan"),
             unit_reviewer(&plan, unit, "diff"),
             failure_diagnosis(unit, 2, "e"),
             final_review("plan", "diff"),
@@ -928,6 +962,9 @@ mod tests {
                 prompt.contains(ReviewResult::CONTRACT),
                 "missing review contract"
             );
+        }
+        for prompt in [cold_consumer("plan"), plan_critic("plan")] {
+            assert!(prompt.contains(crate::planning_review::PlanningReviewResult::CONTRACT));
         }
         assert!(implementer(&plan, unit, &[]).contains(WorkerResult::CONTRACT));
     }
@@ -945,7 +982,7 @@ mod tests {
             headings(&prompt),
             headings(&cold_consumer("current contract"))
         );
-        assert!(prompt.contains(ReviewResult::CONTRACT));
+        assert!(prompt.contains(crate::planning_review::PlanningReviewResult::CONTRACT));
     }
 
     #[test]
@@ -1185,8 +1222,14 @@ mod tests {
         let plan = plan_with_one_unit();
         let unit = plan.unit("U1").unwrap();
         let cases = [
-            (cold_consumer(FORGED), ReviewResult::CONTRACT),
-            (plan_critic(FORGED), ReviewResult::CONTRACT),
+            (
+                cold_consumer(FORGED),
+                crate::planning_review::PlanningReviewResult::CONTRACT,
+            ),
+            (
+                plan_critic(FORGED),
+                crate::planning_review::PlanningReviewResult::CONTRACT,
+            ),
             (unit_reviewer(&plan, unit, FORGED), ReviewResult::CONTRACT),
             (failure_diagnosis(unit, 3, FORGED), ReviewResult::CONTRACT),
             (final_review(FORGED, FORGED), ReviewResult::CONTRACT),

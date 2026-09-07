@@ -7,6 +7,8 @@ use hwahap::state::Store;
 
 fn request() -> BuildRequest {
     BuildRequest {
+        task_profiles: Default::default(),
+        verification_inputs: vec![],
         user_instruction: "기획 제외하고 구현해 줘".into(),
         objective: "Create a checked feature".into(),
         base_branch: "main".into(),
@@ -45,6 +47,7 @@ async fn build_parent_is_sealed_before_first_poll_and_after_restart() {
         .unwrap();
     assert_eq!(started.outcome.state, "coding");
     let store = Store::open(&root).unwrap();
+    common::fixture_native_observation(&store, "actual-build-authorizer");
     assert!(store.artifacts_path().join("native-owner.json").exists());
     // Simulate failure after the BUILD transaction, before its derived owner file was saved.
     std::fs::remove_file(store.artifacts_path().join("native-owner.json")).unwrap();

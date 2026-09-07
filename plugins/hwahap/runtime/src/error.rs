@@ -15,6 +15,9 @@ pub enum Error {
     #[error("{0}")]
     Rejected(String),
 
+    #[error("{0}")]
+    DelegationWait(String),
+
     /// Durable state on disk is unreadable or inconsistent with itself.
     #[error("hwahap state is corrupt: {0}")]
     Corrupt(String),

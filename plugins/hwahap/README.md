@@ -1,4 +1,4 @@
-# Hwahap 0.1.0
+# Hwahap 0.1.1
 
 Codex에서 구현 계획, 코드 변경, 테스트, draft PR 검토를 진행하는 plugin입니다.
 스킬과 로컬 MCP 서버를 함께 제공합니다. 설치 후 새 작업에서 `$hwahap`을 호출하세요.

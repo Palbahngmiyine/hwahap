@@ -1,6 +1,6 @@
 {
   "name": "hwahap",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Plan, build, and review repository changes through a local MCP runtime.",
   "author": {
     "name": "Palbahngmiyine",
@@ -10,7 +10,7 @@
   "interface": {
     "displayName": "Hwahap",
     "shortDescription": "Plan, build, and review changes with Codex.",
-    "longDescription": "A local workflow for confirmed implementation plans, tested changes, and draft pull request reviews. Requires Git, authenticated GitHub CLI, and a Codex host with Astra and Luna native agents.",
+    "longDescription": "A local workflow for confirmed plans, tested changes, and independent draft reviews. Selects model and effort from a replaceable capability catalog and current Codex host availability. Requires Git and authenticated GitHub CLI.",
     "developerName": "Palbahngmiyine",
     "category": "Productivity",
     "capabilities": [

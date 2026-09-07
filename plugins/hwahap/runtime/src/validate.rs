@@ -39,11 +39,22 @@ impl Violation {
 pub fn structural_errors(plan: &Plan) -> Result<Vec<Violation>> {
     let mut out = Vec::new();
     check_schema(plan, &mut out);
+    if let Err(error) = crate::planning_review::validate_findings(&plan.planning_findings, &[]) {
+        out.push(Violation::new(
+            "invalid_planning_findings",
+            error.to_string(),
+        ));
+    }
     check_surfaces(plan, &mut out);
     check_ids(plan, &mut out);
     check_empty_fields(plan, &mut out);
     check_references(plan, &mut out);
     check_cycles(plan, &mut out);
+    for input in &plan.verification_inputs {
+        if crate::verification::inputs::validate_path(input).is_err() {
+            out.push(Violation::new("invalid_verification_input", input));
+        }
+    }
     Ok(sorted_unique(out))
 }
 
@@ -58,6 +69,19 @@ pub fn freeze_blockers(plan: &Plan) -> Result<Vec<Violation>> {
     check_verification(plan, &mut out);
     check_reviews(plan, &mut out)?;
     Ok(sorted_unique(out))
+}
+
+/// Candidate structure uses the common freeze checks before independent reviews exist.
+pub fn planning_candidate_blockers(plan: &Plan) -> Result<Vec<Violation>> {
+    Ok(freeze_blockers(plan)?
+        .into_iter()
+        .filter(|v| {
+            !matches!(
+                v.code,
+                "missing_review" | "failed_review" | "stale_review" | "unresolved_planning_finding"
+            )
+        })
+        .collect())
 }
 
 /// Explicit BUILD keeps executable scope and verification checks without inventing planning evidence.
@@ -852,6 +876,21 @@ fn check_verification(plan: &Plan, out: &mut Vec<Violation>) {
                 format!("{} has no test", unit.id),
             ));
         }
+        if !unit.probe {
+            let covered = id_set(
+                plan.tests_for(&unit.id)
+                    .iter()
+                    .flat_map(|test| test.acceptance_ids.iter().map(String::as_str)),
+            );
+            for id in &unit.acceptance_ids {
+                if !covered.contains(id.as_str()) {
+                    out.push(Violation::new(
+                        "uncovered_unit_acceptance",
+                        format!("{} has no own test for acceptance {id}", unit.id),
+                    ));
+                }
+            }
+        }
     }
     for test in &plan.tests {
         // A test whose unit does not exist is a dangling reference, reported there; there is no unit
@@ -893,7 +932,21 @@ fn check_reviews(plan: &Plan, out: &mut Vec<Violation>) -> Result<()> {
                 format!("the {name} review has not been recorded"),
             )),
             Some(review) => {
-                if !review.passed {
+                if let Err(error) = crate::planning_review::require_resolutions(
+                    &plan.planning_findings,
+                    &review.findings,
+                ) {
+                    out.push(Violation::new(
+                        "unresolved_planning_finding",
+                        format!("{name}: {error}"),
+                    ));
+                }
+                if !review.passed
+                    || review
+                        .findings
+                        .iter()
+                        .any(|f| f.status == crate::planning_review::FindingStatus::Open)
+                {
                     out.push(Violation::new(
                         "failed_review",
                         format!("the {name} review did not pass"),
@@ -1190,7 +1243,7 @@ mod tests {
         assert_eq!(violation.code, "schema");
         assert_eq!(
             violation.detail,
-            "the plan declares schema \"hwahap/v2\", but hwahap/v4 is required"
+            "the plan declares schema \"hwahap/v2\", but hwahap/v5 is required"
         );
         assert!(
             blockers(&plan).contains(&violation),
@@ -1448,7 +1501,14 @@ mod tests {
         ];
         for (expected, mutate) in cases {
             let plan = mutated(mutate);
-            let violation = sole(&blockers(&plan));
+            let violations = blockers(&plan);
+            let expected_count = if expected == "U1 cites acceptance A9" {
+                2
+            } else {
+                1
+            };
+            assert_eq!(violations.len(), expected_count);
+            let violation = &violations[0];
             assert_eq!(violation.code, "dangling_reference", "{expected}");
             assert_eq!(
                 violation.detail,
@@ -1924,9 +1984,16 @@ mod tests {
             });
             p.units[0].acceptance_ids.push("A3".into());
         });
-        let violation = sole(&blockers(&plan));
-        assert_eq!(violation.code, "orphan_acceptance");
-        assert_eq!(violation.detail, "A3 is cited by no test");
+        assert_eq!(
+            blockers(&plan),
+            vec![
+                Violation::new("orphan_acceptance", "A3 is cited by no test"),
+                Violation::new(
+                    "uncovered_unit_acceptance",
+                    "U1 has no own test for acceptance A3"
+                ),
+            ]
+        );
     }
 
     #[test]
@@ -1941,9 +2008,16 @@ mod tests {
                 probe: false,
             })
         });
-        let violation = sole(&blockers(&plan));
-        assert_eq!(violation.code, "untested_unit");
-        assert_eq!(violation.detail, "U4 has no test");
+        assert_eq!(
+            blockers(&plan),
+            vec![
+                Violation::new(
+                    "uncovered_unit_acceptance",
+                    "U4 has no own test for acceptance A1"
+                ),
+                Violation::new("untested_unit", "U4 has no test"),
+            ]
+        );
     }
 
     #[test]

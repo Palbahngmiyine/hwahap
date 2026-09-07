@@ -8,6 +8,8 @@ use hwahap::state::Store;
 
 fn request() -> BuildRequest {
     BuildRequest {
+        task_profiles: Default::default(),
+        verification_inputs: vec![],
         user_instruction: "기획 제외하고 구현해 줘".into(),
         objective: "Create a checked feature".into(),
         base_branch: "main".into(),
@@ -20,6 +22,24 @@ fn request() -> BuildRequest {
             test_command: "test \"$(cat feature.txt)\" = ready".into(),
         }],
     }
+}
+
+#[test]
+fn t04_direct_build_rejects_an_empty_test_before_recording_authority() {
+    let fixture = Fixture::new();
+    git(
+        &fixture.repo,
+        &["update-ref", "refs/remotes/origin/main", "HEAD"],
+    );
+    let mut input = request();
+    input.units[0].test_command.clear();
+    assert!(fixture.engine().start_build(&input).is_err());
+    assert!(Store::open(&fixture.repo)
+        .unwrap()
+        .read_run()
+        .unwrap()
+        .is_none());
+    assert!(!fixture.worktree().exists());
 }
 
 #[tokio::test]
@@ -313,7 +333,7 @@ fn invalid_build_cannot_create_a_worktree_or_execute_commands() {
 }
 
 #[tokio::test]
-async fn native_direct_build_dispatches_authorship_to_the_parent_astra() {
+async fn native_direct_build_routes_low_risk_authorship_by_task_requirements() {
     let fixture = Fixture::new();
     git(
         &fixture.repo,
@@ -321,10 +341,7 @@ async fn native_direct_build_dispatches_authorship_to_the_parent_astra() {
     );
     fixture.engine().start_build(&request()).unwrap();
     let store = Store::open(&fixture.repo).unwrap();
-    let config = hwahap::config::Config::for_run(&store).unwrap();
-    for role in [Role::Implementer, Role::UnitReviewer, Role::FinalReview] {
-        assert_eq!(config.profiles.for_role(role).model, "gpt-6-astra");
-    }
+    common::fixture_native_observation(&store, "direct-owner");
     let host = hwahap::native::NativeHost::default();
     let root = fixture.repo.canonicalize().unwrap();
     let dispatch = tokio::time::timeout(std::time::Duration::from_secs(5), async {
@@ -347,9 +364,11 @@ async fn native_direct_build_dispatches_authorship_to_the_parent_astra() {
     })
     .await
     .unwrap();
-    assert!(dispatch.coordinator_allowed);
-    assert_eq!(dispatch.lane, hwahap::native::NativeLane::Coordinator);
-    assert_eq!(dispatch.model, "gpt-6-astra");
+    assert!(!dispatch.coordinator_allowed);
+    assert_eq!(dispatch.lane, hwahap::native::NativeLane::Worker);
+    assert_eq!(dispatch.model, "gpt-5.6-luna");
+    assert_eq!(dispatch.effort, "medium");
+    dispatch.verify_decision().unwrap();
     assert!(dispatch.reuse_agent_id.is_none());
     host.shutdown().await;
 }

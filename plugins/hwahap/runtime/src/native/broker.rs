@@ -6,9 +6,9 @@ use super::{
     json, load, save, timing, NativeCompletion, NativeDispatch, NativeRegistration, Pending,
 };
 use crate::error::{Error, Result};
-use crate::profile::Profiles;
 use crate::state::Store;
 
+mod catalog;
 mod dispatch;
 
 pub(super) struct Waiting {
@@ -19,21 +19,23 @@ pub(super) struct Waiting {
 /// A single-flight bridge: request is durable before the host can spawn an agent.
 pub struct NativeSessions {
     pub(super) store: Store,
-    pub(super) profiles: Profiles,
     pub(super) max_calls: u64,
     pub(super) timeout_secs: u64,
     pub(super) waiting: Mutex<Option<Waiting>>,
+    pub(super) registered: tokio::sync::Notify,
+    pub(super) changed: Option<std::sync::Arc<tokio::sync::Notify>>,
     pub(super) host_session_id: Option<String>,
 }
 
 impl NativeSessions {
-    pub fn new(store: Store, profiles: Profiles, max_calls: u64, timeout_secs: u64) -> Self {
+    pub fn new(store: Store, max_calls: u64, timeout_secs: u64) -> Self {
         Self {
             store,
-            profiles,
             max_calls,
             timeout_secs,
             waiting: Mutex::new(None),
+            registered: tokio::sync::Notify::new(),
+            changed: None,
             host_session_id: None,
         }
     }
@@ -73,6 +75,12 @@ impl NativeSessions {
                 "registration does not match an active dispatch".into(),
             ));
         }
+        dispatch.verify_decision()?;
+        if registration.decision_digest.as_deref() != Some(&dispatch.decision.digest) {
+            return Err(Error::Rejected(
+                "registration decision digest differs".into(),
+            ));
+        }
         super::pool::check_registration(&self.store, dispatch, &registration.agent_id)?;
         if waiting.pending.completion.is_some() {
             return Ok(());
@@ -93,7 +101,9 @@ impl NativeSessions {
             &waiting.pending.dispatch,
             &registration.agent_id,
         )?;
-        timing::observe(&self.store, &waiting.pending.dispatch, None, None)
+        timing::observe(&self.store, &waiting.pending.dispatch, None, None)?;
+        self.registered.notify_one();
+        Ok(())
     }
 
     /// Durable recording precedes delivery. Identical retries do not deliver twice.
@@ -123,6 +133,10 @@ impl NativeSessions {
             return Err(Error::Rejected(
                 "completion does not match the registered native dispatch".into(),
             ));
+        }
+        dispatch.verify_decision()?;
+        if completion.decision_digest.as_deref() != Some(&dispatch.decision.digest) {
+            return Err(Error::Rejected("completion decision digest differs".into()));
         }
         super::reply::result(&completion)?;
         if let Some(previous) = &waiting.pending.completion {
@@ -252,6 +266,10 @@ impl NativeSessions {
 }
 
 impl crate::engine::Sessions for NativeSessions {
+    fn preflight(&self, spec: &crate::session::SessionSpec) -> Result<()> {
+        self.select(spec).map(|_| ())
+    }
+
     fn run<'a>(
         &'a self,
         spec: &'a crate::session::SessionSpec,

@@ -39,14 +39,18 @@ Acceptance·테스트·허용 경로 변경은 `user_input`으로 PLAN에서 결
 
 ## Codex에서 승인한 계획 넘기기
 
-사용자가 `PLEASE IMPLEMENT THIS PLAN:` 뒤에 전체 계획을 제출했다면 이미 받은 구현 승인을 보존한다.
+이미 받은 계획 승인은 구현 요청 원문과 계획 참조로 보존한다. 전체 본문을 포함한 기존 인계 형식도 지원한다.
 호스트는 `approved_plan`을 지원하는 도구 스키마를 확인하고 원문과 실행 계약을 전달한다.
-같은 승인 메시지를 일반 `request`·`user_input`으로 보내면 승인 계획 인계 경로를 안내한다.
+호스트는 기존 승인 출처와 상태를 확인해 `approved_plan`으로 전달한다.
 
 - `approval.implementation_request`: 사용자의 전체 실제 메시지 원문.
-- `approval.markdown`: 접두사 다음 전체 계획 본문. 바깥 공백만 제거한다.
+- `approval.markdown`: 승인한 전체 계획 본문. 바깥 공백만 제거한다.
 - `approval.markdown_digest`: 그 본문 UTF-8 바이트의 SHA-256, `sha256:<hex>` 형식.
 - `approval.source_head`: 변환에 사용한 현재 깨끗한 checkout의 정확한 commit.
+- `approval.reference`: 기존 승인 출처 `source_reference`, `disposition`, 계획 digest와 요청 원문 digest.
+  요청 상태는 `approved`·`not_approved`·`rejected`·`cancelled`로 구분하며 `approved`만 진행한다.
+  호스트는 전체 메시지의 승인 상태를 판별하고 작업 범위 제한을 원문에 함께 보존한다.
+  원문 요청 digest는 `implementation_request_digest`, 계획 digest는 `plan_digest`다.
 - `contract`: `BuildRequest` 형식의 실행 명세. 원문과 같은 `user_instruction`, 목표·기준 브랜치·
   새 `codex/` 브랜치·전체 테스트 명령·작업별 수용 기준·허용 경로·테스트를 빠짐없이 담는다.
 - `replaces_plan_digest`: 기존 미실행 초안이 있으면 현재 전체 digest, 없으면 `null`.
@@ -66,14 +70,25 @@ Acceptance·테스트·허용 경로 변경은 `user_input`으로 PLAN에서 결
 ## 질문 UI와 원문 응답
 
 `question_batch`는 현재 계획에 결속된 `batch_id`와 최대 3개의 `questions`를 반환한다.
-각 질문은 `id`, 전체 `question`, `options`의 정확한 `label`·`description`을 가진다.
+각 질문은 `id`, 짧은 `question`, `options`의 정확한 `label`·`description`을 가진다.
 추천 대안은 첫 번째에 `(Recommended)`로 표시되며, `UNKNOWN`은 결정 보류다.
 영역 제외 제안에는 제외와 적용 유지 선택지가 있다. 적용 유지를 선택하면 제외 제안을 철회한다.
 
 호스트는 실제 호출 가능한 `request_user_input` 또는 `request_user_input_async`를 확인한다.
 각 도구의 모드·질문 수·선택지 수 조건을 확인하고 현재 호스트에서 지원하는 방식으로 전달한다.
-질문 본문·대안·추천 근거 전체를 표시한다. 선택지 수가 UI 용량을 넘으면 전체 label을 표시한 자유입력을 사용한다.
-텍스트 전달 환경에서는 전체 질문을 표시하고 원문으로 응답을 받는다.
+본문은 하나의 판단을 묻는 한 문장으로 쓰고, 선택 결과는 선택지에 둔다.
+추천 근거·출처·확신도는 `.hwahap/plan.md`에서 확인한다.
+`request_user_input_async`에서는 `question`을 `title`에, 각 `label`을 `options`에 전달한다.
+`description`은 해당 필드를 지원하는 UI에서 선택지 설명으로 전달한다.
+모든 선택지를 담을 수 있는 UI를 우선한다. 자유입력 전용 환경에서는 본문 다음에 선택지를 한 번 표시한다.
+질문 카드를 표시한 뒤 진행 메시지는 다음 작업만 짧게 알린다.
+
+예: **모델 카탈로그 변경을 언제 적용할까요?**
+
+- 새 실행부터 적용 (추천)
+- 진행 중 실행에도 적용
+- 아직 결정하지 못함
+
 질문 ID와 사용자가 제출한 원문을 아래 구조로 보존한다. 정확한 절차는 MCP `instructions`를 따른다.
 
 ```json
@@ -155,35 +170,82 @@ bin/hwahap usage show /absolute/repository
 `cost_estimate.priced_subtotal`은 지정한 가격표로 계산한 추정 소계다.
 토큰 관측값과 함께 단가 출처·유효일·가정을 보존한다.
 
-## 모델 배치 비교
+## 모델 카탈로그와 작업 평가
 
-기본 PLAN은 Luna 첫 구현, Astra 검토·재작업이다. 중간 난도 구현에 Terra를 평가하려면
-새 부모 pool에서 `.hwahap/config.toml`에 아래처럼 세 profile을 명시한다. 기존 pool은 설정을 유지한다.
-direct BUILD는 기존 계약대로 부모 Astra와 별도 Astra 검토자 둘을 사용한다.
+`.hwahap/model-catalog.json`에 카탈로그를 두거나 `.hwahap/config.toml`의 `catalog_path`로 지정한다.
+기본 파일이 없으면 [번들 정책](runtime/src/catalog.rs)을 사용한다. 모델 교체는 새 run부터 적용된다.
+기존 run은 snapshot과 작업자 모델·effort·역할을 유지하고, 해당 모델이 사라지면 복구를 기다린다.
 
-```toml
-[profiles.economy]
-model = "gpt-5.6-terra"
-effort = "medium"
-[profiles.critic]
-model = "gpt-6-astra"
-effort = "high"
-[profiles.deep]
-model = "gpt-6-astra"
-effort = "high"
+| 입력 | 기록할 내용 |
+|---|---|
+| `Catalog` | schema `hwahap/catalog/v1`, revision, 모델별 역량·지원 effort/depth·선호 순서·출처, 모든 역할의 최소 요구 |
+| `host_observation` | 부모 ID·모델/effort, 실제 가용 모델/effort·도구·슬롯, 관찰 시각과 출처 |
+| `plan.task_profiles` | unit별 평가와 aggregate 작업의 `run` 평가 |
+| `task_assessment` | run·계약 digest·unit·role에 결속한 작업 평가 |
+
+요구 역량은 `capabilities`, 추론 깊이는 `depth`(`routine/focused/deep`)에 기록한다.
+`risk`의 `failure_cost`, `reversibility`, `blast_radius`는 위험 수준 0/1/2다.
+각각 실패 비용, 되돌리기 어려움, 영향 범위를 뜻하며 2가 있으면 고위험이다.
+근거가 부족한 평가는 보완한 뒤 진행한다. 카탈로그 수치는 선택 정책이며 실제 품질은 실행 관측으로 비교한다.
+
+`topology`는 predecessors, coupling, shared_resources, writer_owner, separable, write_paths를 담는다.
+공유 자원은 같은 변경 가능 자원의 ID로 기록한다. 작성 소유자는 unit ID, aggregate 작업은 run ID다.
+배정은 선행 조건 → 역량·깊이 합성 → 위험·공유 상태 → 가용 모델 → 검증 의무 순서다.
+공유 상태는 작성 순서를 직렬화하며 모델 등급은 요구 역량으로 선택한다. 고위험 작성은 독립 검토자 둘이
+승인한 격리 checkout에서 실패·복구 명령을 먼저 실행한다. `build.task_profiles["run"]`의
+`writer_owner`는 생략하거나 `"run"`으로 보내면 생성된 run ID로 고정한다.
+
+등록·완료에는 요청의 `decision.digest`를 `decision_digest`로 함께 전달한다.
+최초 응답의 전체 brief를 보관하고, 이후 `native_brief.artifact`는 현재 run의 `.hwahap/artifacts`에서 읽는다.
+같은 성공 기준·base commit·테스트로 후보 모델을 비교하고 실패·복구를 포함한 관측값을 기록한다.
+토큰·비용 누락은 `unknown`, 단가표 계산은 추정값으로 표시한다.
+
+
+## Codex Desktop Plan·Goal 연결
+
+Codex Plan에서 승인한 내용을 `approved_plan`으로 가져오고, 실행 상태는 선택적 `host_context`로 연결한다.
+Goal의 생성·예산·일시정지·재개·완료는 호스트가 관리한다. Hwahap은 계약·검증·복구 증거를 제공한다.
+호스트는 실제 제공하는 기능만 `capabilities`에 기록한다. 참조는 추적용 메타데이터이며 실행 승인은
+`approved_plan`의 원문·digest 검증을 따른다.
+
+```json
+{
+  "host_context": {
+    "provider": "codex-desktop",
+    "task_id": "<host_session_id와 같은 현재 작업 ID>",
+    "plan_ref": "<승인 계획 참조>",
+    "goal_ref": "<현재 Goal 참조>",
+    "capabilities": ["plan", "goal"]
+  }
+}
 ```
 
-동일한 요청·base commit·acceptance·테스트로 Luna와 Terra 실행을 비교한다. `evaluation`의
-run 상태·통과 unit 수·수정 시도·요청 profile, `latency`, 계측 범위와 토큰·추정 비용을 함께 본다.
-실패·중단을 포함한 성공 작업당 비용을 비교한다.
-대표 과제와 회귀 반례로 품질 기준을 고정한 뒤 같은 조건에서 측정한다.
+응답의 `host_context`는 참조·run 상태·accepted unit을 제공한다. 호스트는 전체 Goal 성공 조건과
+증거를 비교해 완료를 판정한다. 이 필드를 생략해도 PLAN·BUILD·검증·복구는 동작한다.
+Codex의 [Plan 사용](https://learn.chatgpt.com/docs/prompting)과
+[Goal 수명주기](https://learn.chatgpt.com/docs/long-running-work)는 호스트 안내를 따른다.
 
-PR 공격·방어의 초기 brief에는 정확한 base/head와 변경 경로를 담는다.
-두 검토자는 해당 revision의 전체 diff와 필요한 주변 소스를 읽어 근거를 작성한다.
+## 총비용을 줄이는 실행 설정
 
-공식 모델 설명은 [Astra](https://developers.openai.com/api/docs/models/gpt-6-astra),
-[Terra](https://developers.openai.com/api/docs/models/gpt-5.6-terra),
-[Luna](https://developers.openai.com/api/docs/models/gpt-5.6-luna)를 따른다.
-[App Server](https://learn.chatgpt.com/docs/app-server)는 `thread/tokenUsage/updated`를 제공한다.
-호스트는 직접 수신한 이벤트의 counters를 전달할 수 있다. 수집·비교 방향은
-[Uber의 측정·문맥 비용·작업별 평가](https://www.uber.com/us/en/blog/efficient-software-factory/)를 참고했다.
+- 번들 카탈로그는 요구 역량을 만족하는 Luna 작성자와 Terra 일반 검토자를 우선한다. 고위험 검토는
+  더 높은 보안·반례 검토 역량과 deep을 요구한다. 모델과 effort는 호스트의 실제 지원 범위와 교차 검사한다.
+- `native_wait`에서는 `hwahap_step`이 기본 30초까지 이벤트를 기다린다. `wait_ms:0`은 즉시 조회다.
+  `await_checks`는 CI 완료 이벤트를 기다리고, 실패한 CI를 수정한 뒤 모델 리뷰를 시작한다.
+- 모든 unit과 aggregate 평가가 명시적으로 저위험이고 첫 PR 리뷰가 깨끗하면 독립 검토 한 번으로 완료한다.
+  평가 누락·공유 상태·고위험·발견 결함·수정 이력은 두 검토를 유지한다.
+- 상태는 요약과 artifact 참조를 반환한다. 전체 비용 근거가 필요할 때 `include_cost_evidence:true`를 사용한다.
+- `usage_session_path`는 현재 작업 JSONL을 선택적으로 연결한다. 기준은 연결 시점이며 이전 작업은 별도 관측이다.
+  연결 실패는 `usage_attachment.status:unavailable`로 표시하고 실행 결과를 함께 반환한다.
+
+검증 재사용은 기본적으로 꺼져 있다. 입력·환경을 재현할 수 있는 프로젝트에서 아래 설정을 사용한다.
+
+```toml
+[verification]
+reuse_passed = true
+environment_revision = "toolchain-and-external-dependencies-v1"
+```
+
+`verification_inputs`에 ignored fixture를 포함한 입력을 선언하고, 도구 체인·외부 의존성이 바뀌면
+`environment_revision`을 갱신한다. 같은 run·unit·검사 종류·명령·입력·환경의 최신 성공 기록과
+온전한 출력 artifact만 재사용한다. 환경 변수·OS·아키텍처도 digest에 포함한다. 실패·중단·입력 변경은
+재실행하며, 고위험 사전 복구 검증은 매번 실행한다.

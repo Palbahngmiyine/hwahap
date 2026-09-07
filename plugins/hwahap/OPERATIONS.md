@@ -5,13 +5,13 @@ run은 요청 하나의 실행 기록이며, unit은 계획 안에서 구현·�
 
 `범위·성공 기준 → PLAN·CONFIRM → plan_ready 또는 BUILD → draft → 공격·방어·수정 → ADJUST 또는 SHIP`
 
-이 문서는 `hwahap/v4` 운영 기준이다. [설치](README.md), [호스트 실행 기록](PLATFORM.md),
+이 문서는 `hwahap/v5` 운영 기준이다. [설치](README.md), [호스트 실행 기록](PLATFORM.md),
 [요청 형식](USAGE.md)을 참고한다. 도구 호출·등록·완료 전달은 실행 중인
 [MCP instructions](runtime/src/mcp.rs)와 반환된 `next`·`message`를 따른다.
 
 ## 1. 시작 전: 범위와 실행 환경
 
-사용자는 원하는 결과와 중요한 제약을 전달한다. Astra는 저장소를 조사하고 작업을 분해한다.
+사용자는 원하는 결과와 중요한 제약을 전달한다. 부모는 저장소를 조사하고 작업을 분해한다.
 
 | 항목 | 시작 요청에 넣을 내용 |
 |---|---|
@@ -37,7 +37,7 @@ Hwahap 자체를 수정할 때는 실행 commit과 바이너리 경로·해시�
 - 계획만 요청: `request`와 `plan_only:true`로 시작해 `plan_ready`에서 계획을 전달한다.
 - 확정 계획 구현: 사용자의 구현 요청을 받은 뒤 전체 계획 digest를 `build_confirmed`로 전달한다.
 - 계획부터 구현: `plan_only:false` 또는 기본값을 사용해 계획 확인 후 BUILD로 이어간다.
-- Codex 승인 계획: `PLEASE IMPLEMENT THIS PLAN:` 원문과 전체 계획을 `approved_plan`으로 전달한다.
+- Codex 승인 계획: 구현 요청 원문·기존 승인 참조와 전체 계획을 `approved_plan`으로 전달한다.
   기존 승인을 보존하고 실행 계약으로 변환한 내용을 독립 검토한다.
 - 기획 생략: 사용자가 명시한 실행 권한으로 `build`를 전달한다.
 
@@ -49,12 +49,12 @@ Direct BUILD 필드는 다음과 같다.
 - `full_suite`: PR 게시와 수정 후 실행할 통합 검증 명령.
 
 실행기는 원격 기준 commit·범위·추적 관계를 검증하고 계약을 고정한다.
-부모 Astra가 구현하고 서로 다른 Astra Critic·Auditor가 검토한다.
+작업 평가와 카탈로그로 작성자를 선택하고 독립 Critic·Auditor가 검토한다.
 동일 BUILD 재전송은 같은 run을 반환한다. 초기 worktree 생성 중 단절은 저장된 계약과 Git 상태를 확인해 재개한다.
 
 ## 2. PLAN: 결정하고 구현 계약을 확인하기
 
-Luna는 저장소 사실을 조사하고 부모 Astra는 선택지·추천·구현 구조를 만든다.
+Worker는 저장소 사실을 조사하고 부모는 선택지·추천·구현 구조를 만든다.
 [모델·effort 정책](ARCHITECTURE.md#5-모델effort-정책)에 따라 작성·검토 책임을 배정한다.
 PLAN은 선행 조건이 해결된 질문 집합인 frontier를 계산하고 최대 3개씩 UI에 전달한다.
 답변을 받은 뒤 `Refining`에서 파급 효과를 검토해 다음 라운드를 구성한다.
@@ -70,7 +70,7 @@ PLAN은 선행 조건이 해결된 질문 집합인 frontier를 계산하고 최
 새 run은 source commit을 기록하고 근거 경로·줄이 해당 commit의 추적 파일에 존재하는지 검사한다.
 Source가 바뀐 재계획은 사실·답변·영역 제외를 새 기준에서 확인한다.
 계획은 요구사항, 관찰 가능한 acceptance, unit 의존관계, unit별 테스트와 full suite를 담는다.
-독립된 Astra Auditor의 ColdConsumer와 Astra Critic의 PlanCritic이 계약을 검토한다.
+독립된 Auditor의 ColdConsumer와 Critic의 PlanCritic이 계약을 검토한다.
 검토 결과는 현재 `review_digest`에 결속한다. 기계 검증과 두 검토 후 사용자는 `.hwahap/plan.md`를 확인한다.
 승인하려면 현재 출력된 `CONFIRM PLAN <challenge>`를 직접 입력한다. 계획이 바뀌면 새 challenge를 사용한다.
 
@@ -80,20 +80,21 @@ Source가 바뀐 재계획은 사실·답변·영역 제외를 새 기준에서 
 호스트는 승인 범위 안에서 Hwahap이 지정한 작업을 진행한다.
 
 1. 의존관계 순서로 실행할 unit을 선택한다.
-2. 일반 PLAN은 Luna, direct BUILD는 부모 Astra가 허용 경로에서 첫 구현을 수행한다.
-3. 실행기가 실제 변경 경로와 테스트 종료 상태를 검사하고 Astra Critic이 검토한다.
-4. 실패하면 부모 Astra가 한 번 재작업한다. 재실패는 근거를 기록하고 중단한다.
+2. 배정된 Worker 또는 부모가 허용 경로에서 첫 구현을 수행한다.
+3. 실행기가 실제 변경 경로와 테스트 종료 상태를 검사하고 Critic이 검토한다.
+4. 실패하면 적격 부모가 한 번 재작업한다. 재실패는 근거를 기록하고 중단한다.
 5. 통과한 변경을 commit하고 모든 unit과 full suite가 완료되면 draft PR을 게시한다.
-6. Critic의 공격 보고서와 별도 Auditor의 방어 판정을 받는다.
+6. CI 결과를 기다리고 실패를 먼저 수정한다. 통과 후 Critic의 공격 보고서와 필요한 Auditor 판정을 받는다.
 7. 확인된 결함은 부모가 수정하고 고정 테스트·full suite를 통과한 뒤 같은 PR에 push해 새 head를 재검토한다.
 
-두 검토자는 읽기 전용으로 작업한다. 보고서는 PR URL·head SHA·계약 digest와 독립된 작업자 ID에 결속한다.
+명시적으로 저위험인 첫 실행의 깨끗한 PR 리뷰는 독립 검토 한 번으로 완료한다.
+그 외에는 두 검토자가 읽기 전용으로 작업한다. 보고서는 PR URL·head SHA·계약 digest와 독립된 작업자 ID에 결속한다.
 방어팀은 각 공격 항목을 `confirmed/refuted/unresolved`로 판정하고 근거를 남긴다.
 미해결 항목이나 실행 예산 소진은 PR과 근거를 보존한 채 중단한다.
 
 ### 보안 검토
 
-두 Astra는 변경된 입력에서 중요한 작업까지 경로를 추적하고 재현·반박과 추가 경로를 독립 검토한다.
+두 검토자는 변경된 입력에서 중요한 작업까지 경로를 추적하고 재현·반박과 추가 경로를 독립 검토한다.
 `security.threat_model`에는 보호 자산, 공격자가 제어하는 입력, 신뢰 경계와 환경 가정을 기록한다.
 
 | 필수 영역 | 검사 대상 |
@@ -129,7 +130,7 @@ Acceptance·테스트·허용 경로 변경은 `user_input`으로 PLAN을 열고
 유효한 accepted unit은 유지하고 변경된 unit과 의존 unit을 다시 수행한다.
 계획·통과 기록은 같은 run에서, 에이전트는 같은 저장소·부모 pool에서 재사용한다.
 
-사용자가 현재 `SHIP <challenge>`를 입력하면 계약 결속, 현재 PR head의 두 독립 검토,
+사용자가 현재 `SHIP <challenge>`를 입력하면 계약 결속, 현재 PR head의 위험 수준에 맞는 독립 검토,
 결함 해결과 필수 checks를 확인한 뒤 draft를 ready로 전환한다.
 이후 코드 소유자 리뷰·merge·배포는 각 작업의 승인과 운영 절차에 따라 진행한다.
 
@@ -144,7 +145,7 @@ PR 갱신은 저장된 URL을 사용한다. 수정 push 후 이전 head가 조�
 
 ## 5. 큰 기능을 여러 단계로 진행하기
 
-Astra가 전체 목표·범위·인터페이스·성공 기준을 정리하고 검증 가능한 단계와 의존관계를 제안한다.
+부모가 전체 목표·범위·인터페이스·성공 기준을 정리하고 검증 가능한 단계와 의존관계를 제안한다.
 사용자는 중요한 범위·기술 결정과 단계 경계를 확인한다.
 
 | 구성 | 운영 방법 |
@@ -185,13 +186,13 @@ Astra가 전체 목표·범위·인터페이스·성공 기준을 정리하고 �
 `native_paused`의 새 관찰은 해당 재시도에 한 번 사용하며 재개 요청도 64회 기본 예산에 포함한다.
 저장된 run 단계에서 재개하므로 진행 중인 unit이나 역할을 다시 수행할 수 있다.
 
-pool은 같은 저장소·부모의 Worker·Critic·Auditor ID와 모델·effort를 유지한다.
+pool은 같은 run·부모의 Worker·Critic·Auditor ID와 모델·effort를 유지한다.
 첫 생성 이후 같은 ID에 follow-up하며 최초 슬롯 부족이나 유지한 자식의 소실은 실행 중단으로 처리한다.
-기본 hard timeout은 native 요청당 180초다. soft 목표는 사실·계약·plan/unit 리뷰·진단 60초,
+기본 연결 제한은 180초이며 등록 후 수행 제한은 별도로 180초다. soft 목표는 사실·계약·plan/unit 리뷰·진단 60초,
 구현·재작업·최종 리뷰 120초, 나머지 계획 역할 90초이며 hard 값으로 상한을 둔다.
 최대 30초 이벤트 대기를 사용하고 `native-timing-<id>.json`에 시각·크기·종료 사유를 기록한다.
-시간에는 호스트 전달 대기가 포함된다. Git·GitHub·테스트 명령은 각각의 명령 실행 절차를 따른다.
-Unit 재시작은 해당 시도의 변경과 ignored 산출물을 초기화하므로 빌드 캐시는 worktree 밖에 둔다.
+연결 대기와 등록 후 수행 시간을 구분한다. Git·GitHub·테스트 명령은 각각의 명령 실행 절차를 따른다.
+Unit 재시작은 소유한 후보를 백업하고 복원한다. 실패 기록과 시도 횟수를 유지하며 빌드 캐시는 worktree 밖에 둔다.
 [호스트 한도](https://learn.chatgpt.com/docs/config-file/config-reference)와
 [스레드 관리](https://learn.chatgpt.com/docs/agent-configuration/subagents)는 공식 설정을 참고한다.
 

@@ -29,117 +29,50 @@ use crate::native::{
 ///
 /// The first paragraph stands alone: a host that reads only the opening of this string still learns
 /// the loop it must run and the one thing it must never do.
-pub const INSTRUCTIONS: &str = "\
-Hwahap turns an implementation request into a confirmed plan and then builds it autonomously. Call \
-hwahap_step and follow its `next` field: `continue` means call hwahap_step again immediately \
-without asking the user; `repair_translation` means repair and resubmit approved_plan as described below; \
-`await_user` means show `message` and wait; `completed` and `blocked` mean \
-show `message` and stop. Pass the user's reply verbatim in `user_input`. Never compose, complete, \
-or infer a CONFIRM PLAN or SHIP line on the user's behalf — only the user may type one.
+pub const INSTRUCTIONS: &str = r#"Use hwahap_step with the absolute repository path, a stable host_session_id and one action. Follow next: continue advances; await_user requests a decision; completed ends the run; blocked reports the cause. Relay CONFIRM PLAN and SHIP verbatim from the user. native_dispatch offers work, native_wait awaits work, and await_checks awaits CI. hwahap_status reads progress; hwahap_ship marks a verified draft ready. Hwahap owns execution evidence and recovery; the host owns Plan/Goal UI and task lifecycle.
 
-When the user already submitted PLEASE IMPLEMENT THIS PLAN: followed by the entire approved Codex \
-plan, use approved_plan instead of restarting request or asking for CONFIRM PLAN again. Relay the exact \
-implementation_request and trimmed approved markdown, its SHA-256 markdown_digest, inspected source_head, \
-and a complete executable contract (BuildRequest). This is approved-plan translation, not skipped planning. \
-For an existing unexecuted draft include replaces_plan_digest equal to its full current digest; preserve \
-its original history. Never replace executing/frozen work. The engine journals approval separately, reviews \
-the entire translation independently, then proceeds into BUILD without another approval. Host-relayed text \
-is not independent authentication. A review defect preserves approval: repair only the translation and \
-resubmit approved_plan with the new current draft digest; generic user_input cannot discard that approval. \
-Ask only for genuinely new material choices, never the same approval. Do not fabricate an approval message \
-from agreement or a proposed plan alone. SHIP remains separate. Unsupported old runtimes require a verified \
-upgrade; never silently send this field to a runtime whose tool schema omits it.
+Reuse the host's approved Plan via approved_plan: original plan, source HEAD, implementation request and bound approval reference. Missing plan.json is a handoff to recover. Preserve approval during translation repair and ask only for new material choices. Use plan_only:true for planning alone, build_confirmed for an approved saved plan, and build only for explicit execution without planning. adjust_build corrects implementation within the frozen contract; changed scope returns to planning. Optional task_profiles bind requirements, topology and risk in both planned and imported contracts.
 
-For PLAN alone, start with request and plan_only:true. Confirmation saves plan_ready without \
-implementation or GitHub authentication. Default plan_only:false continues from confirmed PLAN to BUILD. \
-When the user later requests BUILD of that saved plan, send build_confirmed with its full plan_digest, \
-never reconstruct a direct-build contract. A stale source requires reopening PLAN. For ADJUST, use \
-adjust_build with the verbatim user_instruction, current contract_digest and affected unit_ids only \
-when correcting implementation under unchanged acceptance, tests and paths. Any contract change or \
-uncertain routing returns to PLAN through user_input. Both paths re-review the updated draft before SHIP.
+The host retains its existing Goal. Optional host_context carries provider, task_id, goal_ref, plan_ref and callable capabilities. Treat these references as metadata, not authority. The host creates Goals only on explicit request, preserves user budgets and controls pause/resume. Compare the entire Goal completion criteria with run evidence before marking it complete. One accepted unit or run may leave Goal work. Use native Plan, question and Goal tools only when actually available; otherwise pass approved text and expose the unsupported capability.
 
-When question_batch is present, present its exact question bodies and all option labels using the \
-host's actually available request_user_input or request_user_input_async capability. request_user_input \
-may require Codex Plan mode; do not call an unavailable tool, invent AskUserQuestion, or switch modes. \
-Use the asynchronous question UI if available in the current mode. Never shorten away alternatives. \
-If the UI cannot represent every option, use a free-text question showing all full labels; if no \
-question tool is available, show that same complete page in the conversation. Relay actual answers \
-as question_response:{batch_id,responses:[{id,answer}]} with the unchanged batch ID and answer text. \
-Do not translate labels into C= directives or infer missing choices. Merely preselecting a default, timeout, \
-cancel, or request-resolved event is not a submitted answer. Accept an actual user-submitted response \
-payload, including a submitted recommended option; otherwise remain waiting. \
-The engine pages the whole ready frontier, then rechecks implications. Free text is unconfirmed until \
-the user chooses a clarified interpretation. CONFIRM PLAN and SHIP still require the user's exact typed \
-line in user_input/confirmation; never manufacture them from a question UI response.
+For question_batch use a callable question tool in the current mode: one short question, alternatives in options, supporting evidence in links. Relay actual answers as question_response with the exact batch ID and answer text. Defaults, cancellation and timeout remain unanswered. Forward user_input verbatim. Never compose, complete, or infer CONFIRM PLAN or SHIP lines; only the user may type one. A bound existing approval enters BUILD without another confirmation.
 
-Only when the user explicitly requests execution without planning, send build instead of request. \
-Its user_instruction must be that user's exact authorization; specify the objective, new codex/ \
-branch, remote base branch, scoped units with observable acceptance and test commands, and full_suite. \
-Direct BUILD assigns authorship to this Astra parent and uses separate Astra Critic/Auditor children, \
-requiring two child slots. It records direct BUILD authority without claiming planning reviews or a CONFIRM PLAN message. \
-Requests without an already-approved Codex plan still use the planning and confirmation flow. Never infer direct BUILD permission. \
-Every BUILD publishes a draft before independent Astra attack and defense. Confirmed findings go to \
-parent repair; both teams review the changed commit. Use recheck_pr:true alone to revalidate this \
-run's existing draft after a runtime upgrade; it preserves the contract and retry budget.
+Dispatch: send the exact brief once, obey cwd/access, role, selected model/effort and decision digest. For coordinator register agent_id=coordinator and work in the qualified parent. For reuse_agent_id register that identity before one follow-up. Otherwise create one child with the requested model/effort and no inherited history, then register its returned identity immediately. Workers perform only assigned work; reviewers remain independent of authors. Model/catalog changes apply to new runs. Preserve bound identities and settings within a run; unavailable models enter recovery.
 
-Use Astra as the parent coordinator. Include the same host_session_id in every hwahap_step call: \
-the current parent task ID, or one UUID created once for this parent if the host exposes no ID. \
-Never copy another task's identity. In this repository the pool retains at most three children \
-across units and runs for this parent: Luna worker, Astra critic, Astra auditor. Authors never become reviewers. \
-Inspect native spawn, follow-up, wait and interrupt capabilities before execution; do not probe \
-capacity with disposable children or silently substitute models.
+Completion: stop the worker's turn and commands, then relay its exact dispatch_id/result JSON envelope with agent_stopped:true and matching decision_digest. Keep reported_usage null unless real counters exist. Registration/completion retries retain their original identity and payload. On ambiguous delivery, recover rather than deliver again. dispatch_failure preserves the exact host error; no_agent_created is true only if no child exists and no follow-up was attempted. native_stop requires verified termination of that worker and all its commands before stopped acknowledgment. Missing identities require explicit recovery or abandon with preserved evidence and a successor run; never fabricate a review or silently substitute identity.
 
-For `native_dispatch`, follow the exact lane and identity. If lane=coordinator, register \
-agent_id=coordinator and execute the brief in this Astra parent (planning, implementation or repair). Never spawn \
-a fourth child for that lane. If reuse_agent_id is present, FIRST register that exact agent ID, \
-then send the exact brief with the native follow-up tool ONCE. Registration is durable before \
-follow-up so a lost response cannot trigger duplicate delivery. If reuse_agent_id is absent, \
-spawn one child with task_name=hwahap_<dispatch_id>, fork_turns=none, requested model/effort and \
-exact brief, then register its returned ID immediately. Never replace a retained child by spawning \
-another, change its model, or use it in another lane.
+Waiting: hwahap_step waits internally up to 30 seconds for engine progress (wait_ms:0 returns immediately). For a registered worker, await the host's native completion event. For CI, await the host/forge check event. Avoid model-driven polling. Repeat reports carry native_brief references; read the immutable request artifact when its brief is needed. Worktree paths come from the dispatch, so reuse the host's workspace only when the execution contract supports it.
 
-For `native_wait`, coordinator means perform the assigned work here, not wait for a child. \
-Otherwise use event-driven native waits of at most 30 seconds and check hwahap_step after a wait \
-expires; never sleep for 360 seconds or hold one blocking wait through the deadline. When the \
-engine alone is validating, poll after one second. Return completion only after the child turn \
-and its commands stop, relaying its exact final text with dispatch_id, agent_id, agent_stopped:true \
-and reported_usage:null unless real tool counters exist. The brief requires a dispatch_id/result \
-JSON envelope; every reply without the current ID is rejected. Keep completed pool children \
-for later follow-up turns. Do not close them after each result; interruption is not thread release. \
-Requested model/access and reported tokens are not independent applied-model, sandbox or billing proof.
+Cost: minimize repeated full suites, full-history handoffs and unchanged status calls. Run focused author checks; the engine runs acceptance checks. Supply usage_session_path when a host log is available: attachment covers its baseline onward, and unavailable optional metering is reported separately from execution success. include_cost_evidence:true returns full details; ordinary progress returns a bounded summary and .hwahap/usage.json. Session and dispatch totals overlap; keep unknown usage and actual billing separate. Verification reuse is opt-in with an environment_revision and complete declared inputs; preflight recovery always executes. Report savings only against equal completion criteria including retries and quality.
 
-Report a refused spawn or unavailable capability through dispatch_failure with the exact error. \
-Use no_agent_created:true only when no child exists and no follow-up was attempted. For uncertain \
-creation or any failed follow-up, use false. Never retry a delivery after an ambiguous response. \
-For `native_stop`, stop the registered child (or the reuse_agent_id, or the exact hwahap_<dispatch_id> \
-child if unregistered) and all its commands, then include its discovered agent ID in the stopped \
-acknowledgment so recovery retains that child. Use a null ID only after confirming no child exists. Never \
-acknowledge an uncertain stop. Missing retained agents are a blocker, not permission to reuse \
-a different lane or create replacements.
-
-For `native_paused`, show the failure and stop polling/spawning. Preserve this run. Resume once \
-with dispatch_id and new observed host recovery evidence; elapsed time or reworded old evidence \
-is not recovery. New dispatches still spend native_max_calls. Do not change global thread limits, \
-close unrelated tasks, fabricate results or launch an ACP/CLI replacement. Hwahap owns code edits, \
-tests, commits and PRs; outside the exact dispatch, do not perform that work independently. \
-Host-side `hwahap usage attach <repo> <session.jsonl>` and `usage sync <repo>` are allowed for \
-local token observation in .hwahap/usage.json; see USAGE.md. Attach parent and retained children \
-before their first work in this run. Missing counters remain unknown; never invent reported_usage. \
-The auditor is always a separate child that never participates in implementation.
-
-For ordinary PLAN, `CONFIRM PLAN <challenge>` freezes the plan. An approved Codex plan import \
-retains its actual implementation request instead; never fabricate that CONFIRM PLAN line. After \
-valid approval, continue within scope without duplicate BUILD approval. `SHIP <challenge>` marks the finished draft \
-pull request ready for review. Both challenges are printed by Hwahap and are bound to exact \
-content, so a challenge that does not match is rejected rather than corrected.
-
-hwahap_status reads the run and changes nothing. hwahap_ship is the only consequential action, and \
-it refuses unless the user typed the exact SHIP line, the pull request head is unchanged, required \
-checks pass, and the final review is still fresh.";
+PR: CI failure becomes a bound repair obligation before model review. A complete frozen low-risk profile permits one clean independent PR review; findings, uncertain risk and repair work retain attack/defense. Use recheck_pr:true alone for the current draft, preserving retry budgets and eligible verification evidence. Author checkpoints must respect the repository's rules and the assigned HEAD ownership; arrange compatible checkpoint refs before writing. Resume an interrupted run only with new observed recovery evidence. Archive/abandon preserves code and evidence for a successor; it does not imply successful completion. All edits, tests and publication follow the user's scope and current dispatch authorization."#;
 
 /// Arguments to `hwahap_step`.
 #[derive(Debug, Clone, Deserialize, JsonSchema)]
 pub struct StepArgs {
+    /// Optional Plan/Goal references and callable features from the host.
+    #[serde(default)]
+    pub host_context: Option<crate::host_context::HostContext>,
+    /// Include full cost evidence; the default returns a bounded summary and artifact reference.
+    #[serde(default)]
+    pub include_cost_evidence: bool,
+    /// Optional host-provided session log, attached with a current-usage baseline.
+    #[serde(default)]
+    pub usage_session_path: Option<String>,
+    /// Wait for engine work inside this call, at most 30 seconds. Zero returns immediately.
+    #[serde(default = "default_wait_ms")]
+    pub wait_ms: u64,
+    /// Parent assessment bound to the current task and contract.
+    #[serde(default)]
+    pub task_assessment: Option<crate::delegation::TaskAssessment>,
+    /// End the named run, preserving its worktree and evidence.
+    #[serde(default)]
+    pub abandon: Option<crate::native::AbandonRequest>,
+    /// Current host inventory, accompanying one native action.
+    #[serde(default)]
+    pub host_observation: Option<crate::catalog::HostObservation>,
+    #[serde(default)]
+    pub verification_recovery: Option<crate::verification::Recovery>,
     /// Exact Codex plan implementation request and its executable translation, reviewed before BUILD.
     #[serde(default)]
     pub approved_plan: Option<crate::approval::ApprovedPlanRequest>,
@@ -191,6 +124,8 @@ pub struct StepArgs {
 /// Arguments to `hwahap_status`.
 #[derive(Debug, Clone, Deserialize, JsonSchema)]
 pub struct StatusArgs {
+    #[serde(default)]
+    pub include_cost_evidence: bool,
     /// Absolute path to the repository whose run should be reported.
     pub cwd: String,
 }
@@ -204,9 +139,18 @@ pub struct ShipArgs {
     pub confirmation: String,
 }
 
+#[derive(Debug, Clone, Serialize, JsonSchema)]
+pub struct NativeBriefReference {
+    /// Immutable request under the current run's .hwahap/artifacts directory.
+    pub artifact: String,
+    pub prompt_digest: String,
+}
+
 /// What every tool returns.
 #[derive(Debug, Clone, Serialize, JsonSchema)]
 pub struct RunReport {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub host_context: Option<serde_json::Value>,
     /// Next page of the current planning frontier for the host's actual user-question UI.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub question_batch: Option<crate::dialogue::QuestionBatch>,
@@ -226,7 +170,10 @@ pub struct RunReport {
     /// The draft pull request, once there is one.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub pr_url: Option<String>,
-    /// The exact native request, present while dispatching, waiting or stopping a child.
+    /// Full brief on first offer; registered progress carries metadata and native_brief.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub native_brief: Option<NativeBriefReference>,
+    /// Current native dispatch metadata.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub native_dispatch: Option<NativeDispatch>,
     /// All retained native requests, including incomplete work; unknown usage is explicit.
@@ -236,6 +183,7 @@ pub struct RunReport {
 impl From<StepOutcome> for RunReport {
     fn from(outcome: StepOutcome) -> Self {
         RunReport {
+            host_context: None,
             question_batch: None,
             run_id: outcome.run_id,
             phase: outcome.phase,
@@ -245,12 +193,26 @@ impl From<StepOutcome> for RunReport {
             plan_digest: outcome.plan_digest,
             pr_url: outcome.pr_url,
             native_dispatch: None,
+            native_brief: None,
             cost_evidence: None,
         }
     }
 }
 
+fn default_wait_ms() -> u64 {
+    30_000
+}
+
 impl RunReport {
+    pub fn compact_native(&mut self) {
+        if let Some(dispatch) = self.native_dispatch.as_mut() {
+            self.native_brief = Some(NativeBriefReference {
+                artifact: format!("native-request-{}.json", dispatch.dispatch_id),
+                prompt_digest: dispatch.prompt_digest.clone(),
+            });
+            dispatch.brief.clear();
+        }
+    }
     fn attach_questions(&mut self, root: &std::path::Path) -> crate::Result<()> {
         if self.state == "deciding" && self.next == "await_user" {
             if let Some(plan) = crate::state::Store::open(root)?.read_plan()? {
@@ -265,6 +227,15 @@ impl From<NativeProgress> for RunReport {
     fn from(progress: NativeProgress) -> Self {
         let mut report = RunReport::from(progress.outcome);
         report.native_dispatch = progress.dispatch;
+        if let Some(dispatch) = report.native_dispatch.as_mut() {
+            if dispatch.agent_id.is_some() {
+                report.native_brief = Some(NativeBriefReference {
+                    artifact: format!("native-request-{}.json", dispatch.dispatch_id),
+                    prompt_digest: dispatch.prompt_digest.clone(),
+                });
+                dispatch.brief.clear();
+            }
+        }
         report
     }
 }
@@ -320,11 +291,20 @@ impl Hwahap {
         Parameters(args): Parameters<StepArgs>,
     ) -> Result<Json<RunReport>, ErrorData> {
         let root = root_for(&args.cwd)?;
-        let outcome = self
+        if let Some(context) = &args.host_context {
+            context
+                .validate(&args.host_session_id)
+                .map_err(to_error_data)?;
+        }
+        let host_session_id = args.host_session_id.clone();
+        let mut outcome = self
             .native
             .advance(
                 &root,
                 NativeInput {
+                    host_observation: args.host_observation,
+                    task_assessment: args.task_assessment,
+                    verification_recovery: args.verification_recovery,
                     approved_plan: args.approved_plan,
                     question_response: args.question_response,
                     plan_only: args.plan_only,
@@ -338,18 +318,57 @@ impl Hwahap {
                     registration: args.registration,
                     completion: args.completion,
                     stopped: args.stopped,
+                    abandon: args.abandon,
                     dispatch_failure: args.dispatch_failure,
                     resume: args.resume,
                 },
             )
             .await
             .map_err(to_error_data)?;
+        if outcome.dispatch.is_none() && outcome.outcome.next == "native_wait" && args.wait_ms > 0 {
+            self.native
+                .wait_ready(&root, args.wait_ms.min(30_000))
+                .await;
+            outcome = self
+                .native
+                .advance(
+                    &root,
+                    NativeInput {
+                        host_session_id: Some(host_session_id),
+                        ..Default::default()
+                    },
+                )
+                .await
+                .map_err(to_error_data)?;
+        }
+        let store = crate::state::Store::open(&root).map_err(to_error_data)?;
+        let usage_attachment = args.usage_session_path.map(|path| {
+            match crate::cost::meter::attach(&store, std::path::Path::new(&path), false) {
+                Ok(session) => serde_json::json!({"status":"attached","session_id":session,"coverage":"from attachment baseline"}),
+                Err(error) => serde_json::json!({"status":"unavailable","error":error.to_string()}),
+            }
+        });
+        let context_result = args
+            .host_context
+            .as_ref()
+            .map(|context| crate::host_context::record(&store, context));
         let mut report = RunReport::from(outcome);
+        report.host_context = match context_result {
+            Some(Err(error)) => {
+                Some(serde_json::json!({"status":"unavailable","error":error.to_string()}))
+            }
+            _ => crate::host_context::report(&store).unwrap_or_else(|error| {
+                Some(serde_json::json!({"status":"unavailable","error":error.to_string()}))
+            }),
+        };
         report.attach_questions(&root).map_err(to_error_data)?;
-        report.cost_evidence = Some(
-            crate::cost::persist(&crate::state::Store::open(&root).map_err(to_error_data)?)
-                .map_err(to_error_data)?,
-        );
+        report.cost_evidence = Some(crate::cost::for_report(
+            crate::cost::persist(&store).map_err(to_error_data)?,
+            args.include_cost_evidence,
+        ));
+        if let Some(attachment) = usage_attachment {
+            report.cost_evidence.as_mut().expect("cost report")["usage_attachment"] = attachment;
+        }
         Ok(Json(report))
     }
 
@@ -374,10 +393,15 @@ impl Hwahap {
         let outcome = self.native.status(&root).await.map_err(to_error_data)?;
         let mut report = RunReport::from(outcome);
         report.attach_questions(&root).map_err(to_error_data)?;
-        report.cost_evidence = Some(
+        report.host_context =
+            crate::host_context::report(&crate::state::Store::open(&root).map_err(to_error_data)?)
+                .map_err(to_error_data)?;
+        report.compact_native();
+        report.cost_evidence = Some(crate::cost::for_report(
             crate::cost::summary(&crate::state::Store::open(&root).map_err(to_error_data)?)
                 .map_err(to_error_data)?,
-        );
+            args.include_cost_evidence,
+        ));
         Ok(Json(report))
     }
 
@@ -562,6 +586,47 @@ mod tests {
                 "the first 512 chars omit {expected:?}"
             );
         }
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn invalid_optional_usage_keeps_the_committed_action_visible() {
+        let dir = tempfile::tempdir().unwrap();
+        for args in [
+            vec!["init", "-b", "main"],
+            vec![
+                "-c",
+                "user.name=Test",
+                "-c",
+                "user.email=test@example.invalid",
+                "commit",
+                "--allow-empty",
+                "-m",
+                "seed",
+            ],
+        ] {
+            assert!(std::process::Command::new("git")
+                .args(args)
+                .current_dir(dir.path())
+                .output()
+                .unwrap()
+                .status
+                .success());
+        }
+        std::fs::write(dir.path().join(".git/info/exclude"), "/.hwahap/\n").unwrap();
+        let server = Hwahap::new();
+        let args = serde_json::from_value(serde_json::json!({"cwd":dir.path(),"host_session_id":"fixture","request":"Inspect the empty repository","plan_only":true,"usage_session_path":dir.path().join("missing.jsonl"),"host_context":{"provider":"codex","task_id":"fixture","goal_ref":"goal:fixture"}})).unwrap();
+        let Json(report) = server.step(Parameters(args)).await.unwrap();
+        assert!(!report.run_id.is_empty());
+        assert_eq!(
+            report.host_context.as_ref().unwrap()["references"]["goal_ref"],
+            "goal:fixture"
+        );
+        assert_eq!(
+            report.cost_evidence.unwrap()["usage_attachment"]["status"],
+            "unavailable"
+        );
+        server.native.shutdown().await;
     }
 
     #[test]

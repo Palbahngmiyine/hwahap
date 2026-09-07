@@ -116,36 +116,16 @@ expect_count "daemon or service definitions" 0 "$(find "$skill_dir" -name '*.ser
 
 # ------------------------------------------------------------- effort policy
 
-# The whole policy is what `Profiles::defaults()` returns, so that is what gets counted.
-defaults_block=$(awk '/pub fn defaults\(\)/,/^    }$/' "$src/profile.rs")
-expect_count "model-effort profiles" 3 "$(printf '%s\n' "$defaults_block" | grep -cE '^\s+(economy|critic|deep): ProfileSpec' || true)"
-
-check_pair() {
-  local profile=$1 model=$2 effort=$3
-  local block
-  block=$(printf '%s\n' "$defaults_block" | grep -A3 -E "^\s+$profile: ProfileSpec")
-  if printf '%s\n' "$block" | grep -q "\"$model\"" \
-    && printf '%s\n' "$block" | grep -q "Effort::$effort"; then
-    pass "$profile = $model / $effort"
-  else
-    fail "$profile is not pinned to $model / Effort::$effort"
-  fi
-}
-check_pair economy gpt-5.6-luna Medium
-check_pair critic gpt-6-astra High
-check_pair deep gpt-6-astra High
-
-for banned in None Low Max Ultra; do
-  if grep -qE "^\s+$banned,\s*$" "$src/profile.rs"; then
-    fail "Effort::$banned exists; the policy forbids it and the type must make it unrepresentable"
-  fi
+# Model and effort support is supplied by the pinned catalog and host observation.
+for source in catalog.rs catalog/snapshot.rs catalog/host.rs catalog/selection.rs; do
+  test -f "$src/$source" || fail "missing catalog contract: $source"
 done
-pass "none, low, max and ultra are unrepresentable efforts"
+pass "catalog and observation contracts are present"
 
 if [ -f "$src/acp.rs" ] || grep -q 'agent-client-protocol' "$manifest"; then
   fail "the removed ACP runtime or dependency is present"
 fi
-if ! grep -q 'receipt.verify_for' "$src/engine.rs"; then
+if ! grep -q 'verify_for' "$src/engine.rs"; then
   fail "native receipts are not checked against the requested role and profile"
 fi
 pass "native request evidence is validated without claiming an applied-model echo"

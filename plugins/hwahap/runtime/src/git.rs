@@ -257,6 +257,54 @@ impl Git {
         ))
     }
 
+    /// Capture tracked and untracked changes without mutating the live index.
+    pub fn candidate_patch(&self, cwd: &Path) -> Result<String> {
+        struct TemporaryIndex(PathBuf);
+        impl Drop for TemporaryIndex {
+            fn drop(&mut self) {
+                let _ = std::fs::remove_dir_all(&self.0);
+            }
+        }
+        let suffix = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_err(|e| Error::Internal(e.to_string()))?
+            .as_nanos();
+        let path =
+            std::env::temp_dir().join(format!("hwahap-index-{}-{suffix}", std::process::id()));
+        let builder = std::fs::DirBuilder::new();
+        #[cfg(unix)]
+        let builder = {
+            use std::os::unix::fs::DirBuilderExt;
+            let mut builder = builder;
+            builder.mode(0o700);
+            builder
+        };
+        builder.create(&path).map_err(|e| Error::io(&path, e))?;
+        let temporary = TemporaryIndex(path);
+        let index = temporary.0.join("index");
+        let run = |args: &[&str]| -> Result<Vec<u8>> {
+            let output = git_command(cwd, args)
+                .env("GIT_INDEX_FILE", &index)
+                .output()
+                .map_err(|e| Error::io(cwd, e))?;
+            if !output.status.success() {
+                return Err(Error::command(describe(args), describe_failure(&output)));
+            }
+            Ok(output.stdout)
+        };
+        run(&["read-tree", "HEAD"])?;
+        run(&["add", "-A", "--", ".", ":(top,exclude,literal).hwahap"])?;
+        String::from_utf8(run(&[
+            "diff",
+            "--cached",
+            "--binary",
+            "--no-ext-diff",
+            "--no-textconv",
+            "HEAD",
+        ])?)
+        .map_err(|e| Error::Corrupt(e.to_string()))
+    }
+
     /// Repository-relative paths that differ between two commits.
     pub fn changed_paths_between(&self, cwd: &Path, from: &str, to: &str) -> Result<Vec<String>> {
         require_plain_value("from revision", from)?;
@@ -270,9 +318,18 @@ impl Git {
     /// The `clean` is not optional: an abandoned attempt that leaves a file behind would be counted
     /// as part of the next attempt's changes and could push it out of scope.
     pub fn reset_hard(&self, cwd: &Path, sha: &str) -> Result<()> {
+        self.reset_preserving_inputs(cwd, sha, &[])
+    }
+
+    pub fn reset_preserving_inputs(&self, cwd: &Path, sha: &str, inputs: &[String]) -> Result<()> {
         require_plain_value("revision", sha)?;
+        let exclusions = crate::verification::inputs::cleanup_exclusions(cwd, inputs)?;
         self.run_in(cwd, &["reset", "--hard", sha])?;
-        self.run_in(cwd, &["clean", "-f", "-d", "-x"])?;
+        let mut args = vec!["clean", "-f", "-d", "-x"];
+        for pattern in &exclusions {
+            args.extend(["-e", pattern.as_str()]);
+        }
+        self.run_in(cwd, &args)?;
         Ok(())
     }
 
@@ -549,6 +606,20 @@ mod tests {
         setup(dir.path(), &["commit", "-m", "initial"]);
         let git = Git::open(dir.path()).expect("the temp dir is a work tree");
         (dir, git)
+    }
+
+    #[test]
+    fn candidate_patch_preserves_live_index_and_captures_untracked_binary() {
+        let (dir, git) = repo();
+        write(&dir.path().join("README.md"), "staged\n");
+        setup(dir.path(), &["add", "README.md"]);
+        write(&dir.path().join("README.md"), "unstaged\n");
+        fs::write(dir.path().join("new.bin"), [0, 1, 2, 0, 255]).unwrap();
+        let before = git.fingerprint(dir.path()).unwrap();
+        let patch = git.candidate_patch(dir.path()).unwrap();
+        assert!(patch.contains("+unstaged"));
+        assert!(patch.contains("new.bin") && patch.contains("GIT binary patch"));
+        assert_eq!(git.fingerprint(dir.path()).unwrap(), before);
     }
 
     fn strings(items: &[&str]) -> Vec<String> {

@@ -192,10 +192,13 @@ pub fn summary(store: &Store) -> Result<serde_json::Value> {
     let estimate = pricing::estimate(store, &measured).unwrap_or_else(|error|
         serde_json::json!({"status":"invalid_configuration","priced_subtotal":null,"error":error.to_string()}));
     let run = store.read_run()?;
-    let config = crate::config::Config::for_run(store)?;
-    let role_policy: BTreeMap<_, _> = crate::profile::Role::ALL
-        .iter()
-        .map(|role| (role.as_str(), config.profiles.for_role(*role)))
+    let catalog = run
+        .as_ref()
+        .map(|r| crate::catalog::snapshot(store, &r.run_id))
+        .transpose()?;
+    let selections: Vec<_> = artifacts::<NativeDispatch>(store, "native-request-")?
+        .into_values()
+        .map(|d| d.selection)
         .collect();
     let progress = crate::pr_review::ReviewProgress::load(store)?;
     Ok(serde_json::json!({
@@ -204,7 +207,7 @@ pub fn summary(store: &Store) -> Result<serde_json::Value> {
         "coverage": "usage_reported_completions / requests; incomplete work may consume tokens",
         "total_billed_cost": "unknown",
         "native_thread_release": "unknown; completed or interrupted work does not prove a host thread was released",
-        "pool_scope": "at most three retained children for the same repository and parent task; initial capacity is host-owned",
+        "pool_scope": "at most three retained children for the same run and parent task; capacity is host-observed",
         "latency": latency::summary(store)?,
         "parent_relay_usage": "covered only when the parent session is explicitly attached; overlaps coordinator dispatch usage",
         "limits": "Missing usage is unknown, not zero. Session and dispatch totals overlap; never add them. Unattached sessions and work before attachment are excluded. Cached input is part of input.",
@@ -216,7 +219,8 @@ pub fn summary(store: &Store) -> Result<serde_json::Value> {
             "pr_repair_attempts":progress.as_ref().map(|p| p.repairs),
             "contract_digest":run.as_ref().and_then(|r| r.plan_digest.as_ref()),
             "reviewed_head":progress.as_ref().map(|p| &p.binding.head),
-            "requested_role_policy":role_policy,
+            "catalog_snapshot":catalog,
+            "model_selections":selections,
             "comparison":"Compare the same task, base commit and acceptance tests across separate runs; include failures and missing usage. These observations are not a model benchmark."
         },
     }))
@@ -253,6 +257,32 @@ pub fn usage_command(args: &[String]) -> Result<serde_json::Value> {
     persist(&store)
 }
 
+/// Full evidence remains on disk; ordinary progress stays bounded as dispatch history grows.
+pub fn for_report(value: serde_json::Value, detailed: bool) -> serde_json::Value {
+    if detailed {
+        return value;
+    }
+    serde_json::json!({
+        "artifact": ".hwahap/usage.json",
+        "total": value["total"],
+        "total_billed_cost": value["total_billed_cost"],
+        "limits": value["limits"],
+        "evaluation": {"run_id":value["evaluation"]["run_id"], "state":value["evaluation"]["state"], "accepted_units":value["evaluation"]["accepted_units"], "pr_repair_attempts":value["evaluation"]["pr_repair_attempts"]}
+    })
+}
+
+/// Public progress includes coverage and a local evidence pointer, independent of history size.
+pub fn report_markdown(value: &serde_json::Value) -> String {
+    let count = |key: &str| {
+        value["total"][key]
+            .as_u64()
+            .map(|n| n.to_string())
+            .unwrap_or_else(|| "unknown".into())
+    };
+    format!("## Usage\n\nNative requests: {}; completed: {}; usage reported: {}; missing usage: {}. Actual billed cost: unknown.\n\nDetailed counters, timing and optional estimates: local `.hwahap/usage.json`.\n",
+        count("requests"), count("completions"), count("usage_reported_completions"), count("requests_without_reported_usage"))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -268,7 +298,7 @@ mod tests {
             store,
             "request",
             id,
-            json!({"dispatch_id":id,"run_id":"run","role":"recommender",
+            json!({"dispatch_id":id,"run_id":"run","role":"recommender","assessment":crate::delegation::test_payload().0,"decision":crate::delegation::test_payload().1,"selection":{"run_id":"run","host_session_id":"parent","role":"recommender","unit":null,"model":"m","effort":"high","requirements":{"capabilities":{},"depth":"deep"},"tools":[],"catalog_digest":"catalog","host_digest":"host","digest":"selection"},
             "profile":"deep","unit":null,"model":model,"effort":"high","cwd":"/tmp",
             "access":"read_only","coordinator_allowed":true,"prompt_digest":"x",
             "plan_digest":null,"base_head":"head","brief":"task","agent_id":null,"stop_required":false,"pool_scope":"parent","lane":"coordinator","soft_budget_secs":60,"hard_timeout_secs":180}),

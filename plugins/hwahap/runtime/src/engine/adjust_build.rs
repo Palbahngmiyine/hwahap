@@ -79,6 +79,15 @@ impl Engine {
             &serde_json::to_string_pretty(&adjustment)
                 .map_err(|e| Error::Internal(e.to_string()))?,
         )?;
+        crate::revalidation::record_obligation(
+            &self.store,
+            &*self.clock,
+            &run.run_id,
+            &plan,
+            input.unit_ids.clone(),
+            "adjust",
+            &evidence,
+        )?;
         run.reviewed_head = None;
         run.state = RunState::Coding {
             unit: first,
@@ -97,7 +106,7 @@ impl Engine {
             return Ok(vec![]);
         };
         if adjustment.request.contract_digest != plan.digest()?.to_string()
-            || !adjustment.affected_units.contains(&unit.id)
+            || !adjustment.request.unit_ids.contains(&unit.id)
         {
             return Ok(vec![]);
         }

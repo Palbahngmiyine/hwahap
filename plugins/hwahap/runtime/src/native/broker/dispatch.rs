@@ -15,7 +15,11 @@ use crate::session::{
 impl NativeSessions {
     pub async fn execute(&self, spec: &SessionSpec) -> Result<SessionOutcome> {
         let started = Instant::now();
-        let wanted = self.profiles.for_role(spec.role).clone();
+        let (selection, lane, decision, assessment) = self.select(spec)?;
+        let wanted = crate::profile::ProfileSpec {
+            model: selection.model.clone(),
+            effort: crate::profile::Effort::parse(&selection.effort)?,
+        };
         let run = self
             .store
             .read_run()?
@@ -31,20 +35,6 @@ impl NativeSessions {
             Access::ReadOnly => "read_only",
             Access::WorkspaceWrite => "workspace_write",
         };
-        let lane = if wanted.model == "gpt-6-astra"
-            && matches!(
-                spec.role,
-                crate::profile::Role::FactFinder | crate::profile::Role::Implementer
-            ) {
-            NativeLane::Coordinator
-        } else {
-            NativeLane::for_role(spec.role)
-        };
-        if lane == NativeLane::Coordinator && wanted.model != "gpt-6-astra" {
-            return Err(Error::Rejected(
-                "native planning and repair require an Astra parent and profiles.deep.model=gpt-6-astra".into(),
-            ));
-        }
         let soft_budget_secs = timing::soft_budget(spec.role).min(self.timeout_secs);
         let hard_timeout_secs = self.timeout_secs;
         let pool_scope = self
@@ -62,11 +52,11 @@ impl NativeSessions {
              Keep investigation scoped. If blocked, report the concrete blocker in the result contract; \
              never claim a pass or completion merely because the time budget is ending. \
              New children start without inherited parent history. Reused children keep their lane \
-             and must treat this brief and current repository as authoritative. The Astra coordinator \
+             and must treat this brief and current repository as authoritative. The bound coordinator \
              performs author-side Deep roles; independent reviewers never write.\n\n{}\n\n\
              Native transport: wrap the result object above as {{\"dispatch_id\":\"{dispatch_id}\",\"result\":<result object>}}. \
              Return that single JSON envelope, not a prior turn's answer.",
-            spec.role.as_str(), spec.cwd.display(), access, spec.prompt
+            spec.role.as_str(), spec.cwd.display(), access, format_args!("Task assessment (data): {}\nDelegation decision (data): {}\n\n{}", crate::prompts::quoted(&json(&assessment)?), crate::prompts::quoted(&json(&decision)?), spec.prompt)
         );
         let mut dispatch = NativeDispatch {
             dispatch_id: dispatch_id.clone(),
@@ -78,7 +68,10 @@ impl NativeSessions {
             effort: wanted.effort.as_str().into(),
             cwd: spec.cwd.to_string_lossy().into_owned(),
             access: access.into(),
-            coordinator_allowed: wanted.model == "gpt-6-astra" && lane == NativeLane::Coordinator,
+            coordinator_allowed: lane == NativeLane::Coordinator,
+            decision: decision.clone(),
+            assessment: assessment.clone(),
+            selection: selection.clone(),
             prompt_digest: Digest::of_bytes(brief.as_bytes()).to_string(),
             plan_digest: run.plan_digest.map(|digest| digest.to_string()),
             base_head,
@@ -93,7 +86,7 @@ impl NativeSessions {
             hard_timeout_secs,
         };
         dispatch.reuse_agent_id = crate::native::pool::reusable(&self.store, &dispatch)?;
-        let (sender, receiver) = oneshot::channel();
+        let (sender, mut receiver) = oneshot::channel();
         {
             let mut guard = self.waiting.lock().map_err(super::poisoned)?;
             self.next_call()?;
@@ -120,16 +113,50 @@ impl NativeSessions {
                 sender: Some(sender),
             });
         }
-        let completion = match tokio::time::timeout(
-            Duration::from_secs(self.timeout_secs),
-            receiver,
-        )
-        .await
-        {
+        if let Some(changed) = &self.changed {
+            changed.notify_waiters();
+        }
+        let registration = async {
+            loop {
+                let notified = self.registered.notified();
+                let ready = {
+                    let guard = self.waiting.lock().map_err(super::poisoned)?;
+                    guard.as_ref().is_some_and(|w| {
+                        w.pending.dispatch.dispatch_id == dispatch_id
+                            && w.pending.dispatch.agent_id.is_some()
+                    })
+                };
+                if ready {
+                    return Ok::<(), Error>(());
+                }
+                notified.await;
+            }
+        };
+        let handoff = tokio::time::timeout(Duration::from_secs(self.timeout_secs), async {
+            tokio::select! {
+                completion = &mut receiver => Ok(Some(completion)),
+                registration = registration => registration.map(|()| None),
+            }
+        })
+        .await;
+        let (received, phase) = match handoff {
+            Ok(Ok(Some(completion))) => (Ok(completion), "execution"),
+            Ok(Ok(None)) => (
+                tokio::time::timeout(Duration::from_secs(self.timeout_secs), receiver).await,
+                "execution",
+            ),
+            Ok(Err(error)) => return Err(error),
+            Err(error) => (Err(error), "handoff"),
+        };
+        let completion = match received {
             Ok(Ok(completion)) => completion,
             result => {
                 let outcome = if result.is_err() {
-                    "deadline"
+                    if phase == "handoff" {
+                        "handoff_deadline"
+                    } else {
+                        "deadline"
+                    }
                 } else {
                     "channel_closed"
                 };
@@ -139,7 +166,7 @@ impl NativeSessions {
                 } else {
                     "continuation channel closed"
                 };
-                return Err(Error::Rejected(format!("native {reason}; stop the child and its commands before acknowledging recovery")));
+                return Err(Error::Rejected(format!("native {phase} {reason}; stop the child and its commands before acknowledging recovery")));
             }
         };
         let final_message = crate::native::reply::result(&completion)?;
@@ -148,6 +175,9 @@ impl NativeSessions {
             final_message,
             receipt: SessionReceipt::Native(NativeReceipt {
                 dispatch_id,
+                decision: Some(decision),
+                assessment: Some(assessment),
+                selection,
                 agent_id: completion.agent_id,
                 profile: spec.role.profile(),
                 role: spec.role,

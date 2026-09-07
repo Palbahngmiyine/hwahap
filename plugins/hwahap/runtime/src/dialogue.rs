@@ -2,9 +2,7 @@
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
-use crate::plan::{
-    Alternative, Decision, Plan, Recommendation, Selection, SurfaceStatus, SURFACES,
-};
+use crate::plan::{Alternative, Decision, Plan, Selection, SurfaceStatus, SURFACES};
 use crate::{frontier, Error, Result};
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
@@ -143,7 +141,7 @@ impl QuestionBatch {
             .take(3)
         {
             let decision = plan.decision(&id).expect("frontier validated decision ids");
-            questions.push(decision_question(decision, plan));
+            questions.push(decision_question(decision));
         }
         for surface in SURFACES {
             if plan.interactive && !plan.question_frontier.contains(&surface.id().to_string()) {
@@ -212,7 +210,7 @@ fn alternative_label(decision: &Decision, alt: &Alternative) -> String {
     format!("{}: {}{suffix}", alt.id, alt.value)
 }
 
-fn decision_question(decision: &Decision, plan: &Plan) -> Question {
+fn decision_question(decision: &Decision) -> Question {
     let recommended = decision.recommendation.recommended_alternative();
     let mut alternatives: Vec<_> = decision.alternatives.iter().collect();
     alternatives.sort_by_key(|alt| {
@@ -227,37 +225,15 @@ fn decision_question(decision: &Decision, plan: &Plan) -> Question {
     });
     let mut options: Vec<_> = alternatives
         .into_iter()
-        .map(|alt| {
-            option(
-                alternative_label(decision, alt),
-                "표시된 동작을 선택합니다.",
-            )
-        })
+        .map(|alt| option(alternative_label(decision, alt), ""))
         .collect();
     options.push(option(
         UNKNOWN.into(),
         "결정이 필요함을 남기고 확인 질문을 받습니다.",
     ));
-    let detail = match &decision.recommendation {
-        Recommendation::Recommended { choice, rationale, evidence, tradeoffs, impact, confidence } => format!(
-            "추천: {choice}\n근거: {}\n사실 근거: {}\nTrade-offs: {}\n영향: {}\n확신도: {confidence:?}",
-            rationale.join("; "), evidence.join(", "), tradeoffs.join("; "), impact.join("; ")),
-        Recommendation::NoRecommendation { rationale } => format!("추천 없음: {}", rationale.join("; ")),
-        Recommendation::ProbeRequired { probe_unit, rationale } => format!("먼저 확인할 실험: {probe_unit}\n근거: {}", rationale.join("; ")),
-    };
-    let sources = if let Recommendation::Recommended { evidence, .. } = &decision.recommendation {
-        evidence
-            .iter()
-            .filter_map(|id| plan.facts.iter().find(|f| &f.id == id))
-            .map(|f| format!("{}: {} (출처: {})", f.id, f.answer, f.sources.join(", ")))
-            .collect::<Vec<_>>()
-            .join("\n")
-    } else {
-        String::new()
-    };
     Question {
         id: decision.id.clone(),
-        question: format!("{}\n\n{detail}\n{sources}", decision.question),
+        question: decision.question.clone(),
         options,
     }
 }
@@ -265,7 +241,7 @@ fn decision_question(decision: &Decision, plan: &Plan) -> Question {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::plan::{Alternative, Confidence, DecisionKind, OpenItem, Surface};
+    use crate::plan::{Alternative, Confidence, DecisionKind, OpenItem, Recommendation, Surface};
 
     fn fixture() -> Plan {
         let mut plan = Plan::new("dialogue", "main", "a concrete goal");
@@ -311,8 +287,13 @@ mod tests {
             "ALT2: actual behavior 2 (Recommended)"
         );
         assert_eq!(question.options[1].label, "ALT1: actual behavior 1");
-        for evidence in ["repeatable", "F1", "cost", "API", "High"] {
-            assert!(question.question.contains(evidence));
+        assert_eq!(question.question, plan.decision("C1").unwrap().question);
+        assert!(question.options[0].description.is_empty());
+        // Evidence stays in the plan; the UI transports only the decision and choices.
+        let document = crate::render::plan_markdown(&plan).unwrap();
+        for evidence in ["repeatable", "F1", "cost", "API"] {
+            assert!(!question.question.contains(evidence));
+            assert!(document.contains(evidence));
         }
         let json = serde_json::to_string(&batch).unwrap();
         assert_eq!(serde_json::from_str::<QuestionBatch>(&json).unwrap(), batch);

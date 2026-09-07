@@ -235,6 +235,35 @@ async fn plan_to_confirmation(fixture: &Fixture, script: &Script) -> String {
     challenge_in(&proved.message, "CONFIRM PLAN ")
 }
 
+#[tokio::test]
+async fn t04_normal_plan_reports_own_coverage_gap_before_build() {
+    let f = Fixture::new();
+    let mut steps = happy_path_steps()[..6].to_vec();
+    steps.extend([
+        step(Role::ColdConsumer, Reply::say(PASS)),
+        step(Role::PlanCritic, Reply::say(PASS)),
+    ]);
+    let script = Script::new(steps);
+    let challenge = plan_to_confirmation(&f, &script).await;
+    let store = hwahap::state::Store::open(&f.repo).unwrap();
+    let mut plan = store.read_plan().unwrap().unwrap();
+    plan.units[0].acceptance_ids.push("A2".into());
+    store.write_plan(&plan).unwrap();
+    let engine = f.engine();
+    engine
+        .step_with(&script, None, Some(&format!("CONFIRM PLAN {challenge}")))
+        .await
+        .unwrap();
+    let outcome = engine.step_with(&script, None, None).await.unwrap();
+    assert!(
+        outcome.message.contains("uncovered_unit_acceptance"),
+        "{}",
+        outcome.message
+    );
+    assert!(!store.read_plan().unwrap().unwrap().is_frozen().unwrap());
+    assert!(!f.worktree().exists());
+}
+
 /// Runs the whole cycle and returns every outcome from the confirmation onwards.
 async fn run_to_draft_pr(fixture: &Fixture, script: &Script) -> Vec<StepOutcome> {
     let challenge = plan_to_confirmation(fixture, script).await;
@@ -1071,7 +1100,14 @@ async fn the_run_is_recorded_in_a_journal_that_verifies() {
         events.len() as u64,
         "the journal skipped a sequence number"
     );
-    assert!(events.iter().all(|e| e.ts == NOW));
+    assert!(events
+        .iter()
+        .filter(|e| e.kind != "host_observed")
+        .all(|e| e.ts == NOW));
+    assert!(events
+        .iter()
+        .filter(|e| e.kind == "host_observed")
+        .all(|e| chrono::DateTime::parse_from_rfc3339(&e.ts).is_ok()));
 }
 
 #[tokio::test]
@@ -1089,7 +1125,7 @@ async fn the_plan_and_its_rendering_are_written_where_the_user_is_told_to_look()
         &std::fs::read_to_string(fixture.repo.join(".hwahap/plan.json")).unwrap(),
     )
     .unwrap();
-    assert_eq!(plan["schema"], "hwahap/v4");
+    assert_eq!(plan["schema"], "hwahap/v5");
 }
 
 #[tokio::test]
@@ -1537,7 +1573,7 @@ async fn frozen_plan_tampering_is_refused_before_ship() {
 }
 
 #[tokio::test]
-async fn changing_an_accepted_unit_rebuilds_its_unchanged_dependents() {
+async fn changing_an_accepted_contract_rebuilds_it_and_revalidates_unchanged_dependents() {
     let fixture = Fixture::new();
     let script = Script::new(happy_path_steps());
     run_to_draft_pr(&fixture, &script).await;
@@ -1560,10 +1596,6 @@ async fn changing_an_accepted_unit_rebuilds_its_unchanged_dependents() {
             Reply::write(&[("src/added.txt", "revised\n")], DONE),
         ),
         step(Role::UnitReviewer, Reply::say(PASS)),
-        step(
-            Role::Implementer,
-            Reply::write(&[("docs/added.md", "# revised\n")], DONE),
-        ),
         step(Role::UnitReviewer, Reply::say(PASS)),
         step(Role::UnitReviewer, Reply::PrAttack),
         step(Role::FinalReview, Reply::pr_defense()),
@@ -1624,14 +1656,14 @@ async fn changing_an_accepted_unit_rebuilds_its_unchanged_dependents() {
     );
     assert_eq!(
         git(&fixture.worktree(), &["show", "HEAD:docs/added.md"]),
-        "# revised"
+        "# added"
     );
     assert_eq!(
         git(
             &fixture.worktree(),
             &["rev-list", "--count", &format!("{old_head}..HEAD")]
         ),
-        "2"
+        "1"
     );
     assert_eq!(
         script
@@ -1640,7 +1672,7 @@ async fn changing_an_accepted_unit_rebuilds_its_unchanged_dependents() {
             .filter(|c| c.role == Role::Implementer)
             .map(|c| c.unit.clone().unwrap())
             .collect::<Vec<_>>(),
-        vec!["U1", "U2", "U1", "U2"]
+        vec!["U1", "U2", "U1"]
     );
     assert_eq!(script.remaining(), 0);
 }
@@ -2033,7 +2065,7 @@ async fn completed_plan_reviews_survive_an_interrupted_critic_or_recommender() {
     for fail_cold in [false, true] {
         let fixture = Fixture::new();
         let cold = if fail_cold {
-            r#"{"verdict":"fail","findings":["U1 leaves the output encoding undecided"]}"#
+            r#"{"verdict":"fail","findings":[{"id":"CC1","parent_id":null,"kind":"choice","targets":["U1"],"evidence":["U1 leaves the output encoding undecided"],"expected":"U1 leaves the output encoding undecided","status":"open","depends_on":[]}]}"#
         } else {
             PASS
         };
@@ -2165,6 +2197,8 @@ async fn direct_build_adjust_preserves_branch_and_enters_plan() {
     );
     let engine = fixture.engine();
     let input = hwahap::engine::BuildRequest {
+        task_profiles: Default::default(),
+        verification_inputs: vec![],
         user_instruction: "Build without planning".into(),
         objective: REQUEST.into(),
         base_branch: "main".into(),
@@ -2603,7 +2637,9 @@ async fn adversarial_review_added_question_is_available_in_ui_batch() {
         step(Role::PlanSynthesis, Reply::say(structure())),
         step(
             Role::ColdConsumer,
-            Reply::say(r#"{"verdict":"fail","findings":["A new explicit decision is needed"]}"#),
+            Reply::say(
+                r#"{"verdict":"fail","findings":[{"id":"CC1","parent_id":null,"kind":"choice","targets":["U1"],"evidence":["A new explicit decision is needed"],"expected":"A new explicit decision is needed","status":"open","depends_on":[]}]}"#,
+            ),
         ),
         step(Role::PlanCritic, Reply::say(PASS)),
         step(Role::Recommender, Reply::say(followup.to_string())),

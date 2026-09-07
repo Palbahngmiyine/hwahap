@@ -17,17 +17,21 @@ pub mod error;
 pub mod forge;
 pub mod frontier;
 pub mod git;
+pub mod host_context;
 pub mod mcp;
 pub mod native;
 pub mod plan;
+pub mod planning_review;
 pub mod pr_review;
 pub mod profile;
 pub mod prompts;
 pub mod proposal;
 pub mod render;
+pub mod revalidation;
 pub mod session;
 pub mod state;
 pub mod validate;
+pub mod verification;
 
 pub use error::{Error, Result};
 pub mod approval;
@@ -42,3 +46,6 @@ where
 {
     serde::Deserialize::deserialize(deserializer)
 }
+
+pub mod catalog;
+pub mod delegation;

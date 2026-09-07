@@ -2,18 +2,19 @@
 # Package a Git snapshot as an installable marketplace and a first-run binary.
 set -euo pipefail
 cd "$(dirname "$0")/.."
-target=${1:?usage: tests/package.sh RUST_TARGET}
+target=${1:?usage: tests/package.sh RUST_TARGET [SNAPSHOT_REF]}
+snapshot=$(git rev-parse --verify --end-of-options "${2:-HEAD}^{commit}")
 case "$target" in
   x86_64-unknown-linux-gnu|aarch64-apple-darwin|x86_64-apple-darwin) ;;
   *) echo "unsupported release target: $target" >&2; exit 1 ;;
 esac
-version=$(cat plugins/hwahap/version.txt)
+version=$(git show "$snapshot:plugins/hwahap/version.txt")
 binary="plugins/hwahap/runtime/target/$target/release/hwahap"
 test "$("$binary" --version)" = "hwahap $version"
 work=$(mktemp -d)
 trap 'rm -rf "$work"' EXIT
 mkdir -p "$work/hwahap" dist
-git archive HEAD .agents/plugins plugins/hwahap | tar -x -C "$work/hwahap"
+git archive "$snapshot" .agents/plugins plugins/hwahap | tar -x -C "$work/hwahap"
 plugin="$work/hwahap/plugins/hwahap"
 mkdir -p "$plugin/runtime/target/release"
 cp "$binary" "$plugin/runtime/target/release/hwahap"

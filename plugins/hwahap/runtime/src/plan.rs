@@ -1,4 +1,4 @@
-//! The `hwahap/v4` plan contract.
+//! The `hwahap/v5` plan contract.
 //!
 //! The plan is the only thing the coding engine is allowed to act on. Everything the user decided
 //! lives here, and nothing else does: there is no separate answers database, no side table of
@@ -17,7 +17,7 @@ use crate::canonical::Digest;
 use crate::error::{Error, Result};
 
 /// The schema tag written into, and required from, `plan.json`.
-pub const SCHEMA: &str = "hwahap/v4";
+pub const SCHEMA: &str = "hwahap/v5";
 
 /// The twelve decision surfaces. They are a checklist, never a stage.
 pub const SURFACES: [Surface; 12] = [
@@ -405,7 +405,7 @@ pub struct PlanReview {
     pub ts: String,
     pub passed: bool,
     #[serde(default)]
-    pub findings: Vec<String>,
+    pub findings: Vec<crate::planning_review::PlanningFinding>,
 }
 
 /// The two plan reviews required before freezing.
@@ -446,6 +446,7 @@ pub struct Frozen {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Plan {
+    pub task_profiles: std::collections::BTreeMap<String, crate::delegation::TaskProfile>,
     pub schema: String,
     /// An explicitly approved Codex plan, distinct from interview answers and typed confirmation.
     #[serde(deserialize_with = "crate::required_option")]
@@ -489,6 +490,9 @@ pub struct Plan {
     pub structure_stale: bool,
     /// The command run once, after every unit is accepted.
     pub full_suite: String,
+    pub verification_inputs: Vec<String>,
+    pub planning_findings: Vec<crate::planning_review::PlanningFinding>,
+    pub decomposition_history: Vec<crate::planning_review::PlanningResolution>,
     pub reviews: PlanReviews,
     /// Set by `CONFIRM PLAN` or explicit BUILD; excluded from the plan digest.
     #[serde(deserialize_with = "crate::required_option")]
@@ -513,6 +517,7 @@ impl Plan {
         statement: impl Into<String>,
     ) -> Self {
         Plan {
+            task_profiles: Default::default(),
             schema: SCHEMA.to_string(),
             approved_plan: None,
             execution_branch: None,
@@ -544,6 +549,9 @@ impl Plan {
             adjustments: Vec::new(),
             structure_stale: false,
             full_suite: String::new(),
+            verification_inputs: Vec::new(),
+            planning_findings: Vec::new(),
+            decomposition_history: Vec::new(),
             reviews: PlanReviews::default(),
             frozen: None,
         }
@@ -663,14 +671,16 @@ impl Plan {
 
         Digest::of(&serde_json::json!({
             "unit": unit,
+            "task_profile": self.task_profiles.get(unit_id),
             "acceptance": acceptance,
             "requirements": requirements,
             "decisions": decisions,
             "tests": tests,
+            "verification_inputs": self.verification_inputs,
         }))
     }
 
-    /// Rejects a plan whose schema tag is not `hwahap/v4`.
+    /// Rejects a plan whose schema tag is not `hwahap/v5`.
     ///
     /// Another schema is not imported: the shapes do not correspond, and a silent partial import
     /// would produce a plan the user never confirmed.

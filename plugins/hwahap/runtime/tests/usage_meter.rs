@@ -27,6 +27,7 @@ fn fixture() -> (tempfile::TempDir, Store, std::path::PathBuf) {
             },
         )
         .unwrap();
+    hwahap::catalog::pin(&store, &FixedClock::new("2026-09-06T00:00:00Z"), "run").unwrap();
     let log = dir.path().join("session.jsonl");
     let text = format!(
         "{}\n{}\n",

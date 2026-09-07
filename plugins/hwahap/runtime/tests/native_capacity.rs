@@ -15,6 +15,8 @@ async fn setup() -> (Fixture, NativeHost, NativeDispatch) {
         .step(Some("Inspect this repository"), None)
         .await
         .unwrap();
+    let store = hwahap::state::Store::open(&fixture.repo).unwrap();
+    common::fixture_native_observation(&store, &store.read_run().unwrap().unwrap().run_id);
     let host = NativeHost::default();
     let request = dispatch(&host, &fixture).await;
     (fixture, host, request)
@@ -23,6 +25,7 @@ async fn setup() -> (Fixture, NativeHost, NativeDispatch) {
 async fn dispatch(host: &NativeHost, fixture: &Fixture) -> NativeDispatch {
     tokio::time::timeout(std::time::Duration::from_secs(5), async {
         loop {
+            common::fixture_assessments(&hwahap::state::Store::open(&fixture.repo).unwrap());
             let progress = host
                 .advance(&fixture.repo, NativeInput::default())
                 .await
@@ -268,6 +271,7 @@ async fn failure_actions_reject_wrong_dispatch_registered_child_and_mixed_inputs
         &fixture.repo,
         NativeInput {
             registration: Some(NativeRegistration {
+                decision_digest: Some(request.decision.digest.clone()),
                 dispatch_id: request.dispatch_id.clone(),
                 agent_id: "child-1".into(),
             }),
@@ -363,6 +367,7 @@ fn failed_input(request: &NativeDispatch) -> NativeInput {
 async fn recommender_capacity_recovery_preserves_completed_fact_finding() {
     let (fixture, host, first) = setup().await;
     let registered = NativeRegistration {
+        decision_digest: Some(first.decision.digest.clone()),
         dispatch_id: first.dispatch_id.clone(),
         agent_id: "fact-child".into(),
     };
@@ -377,7 +382,8 @@ async fn recommender_capacity_recovery_preserves_completed_fact_finding() {
     .unwrap();
     let facts = r#"{"facts":[{"id":"F1","question":"what exists?","answer":"one seed file","sources":["src/existing.txt:1"]}]}"#;
     let completion = NativeCompletion {
-        dispatch_id: first.dispatch_id.clone(),
+        decision_digest: Some(first.decision.digest.clone()),
+dispatch_id: first.dispatch_id.clone(),
         agent_id: "fact-child".into(),
         final_message: serde_json::json!({"dispatch_id":first.dispatch_id,"result":serde_json::from_str::<serde_json::Value>(facts).unwrap()}).to_string(),
         agent_stopped: true,
@@ -501,6 +507,8 @@ async fn explicit_capacity_recoveries_still_exhaust_the_durable_request_budget()
         "[limits]\nnative_max_calls = 2\n",
     )
     .unwrap();
+    let store = hwahap::state::Store::open(&fixture.repo).unwrap();
+    common::fixture_native_observation(&store, &store.read_run().unwrap().unwrap().run_id);
     let mut host = NativeHost::default();
     let mut run_id = String::new();
     for expected in 1..=2 {

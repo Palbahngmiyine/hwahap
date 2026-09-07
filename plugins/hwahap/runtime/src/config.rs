@@ -1,4 +1,4 @@
-//! Configuration: native execution limits and the three role profiles.
+//! Configuration: native execution limits and a replaceable model catalog.
 //!
 //! Everything here has a working default, so an unconfigured repository still runs. What cannot be
 //! defaulted is rejected rather than guessed.
@@ -13,10 +13,23 @@ use crate::profile::Profiles;
 /// The file read from `<repo>/.hwahap/config.toml`, if it exists.
 pub const CONFIG_FILE: &str = "config.toml";
 
+/// Explicit reproducibility contract; mutable external tests run on every request.
+#[derive(Debug, Clone, Default, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct VerificationPolicy {
+    #[serde(default)]
+    pub reuse_passed: bool,
+    #[serde(default)]
+    pub environment_revision: String,
+}
+
 /// Everything Hwahap needs beyond the plan itself.
 #[derive(Debug, Clone)]
 pub struct Config {
+    pub verification: VerificationPolicy,
     pub profiles: Profiles,
+    pub catalog_path: Option<String>,
+    pub legacy_profiles: bool,
     /// How long a single test command may run before it counts as failed.
     pub test_timeout_secs: u64,
     pub native_max_calls: u64,
@@ -26,11 +39,15 @@ pub struct Config {
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct Document {
-    /// Kept as a raw value so that [`Profiles::from_toml`] stays the single parser for profiles;
+    #[serde(default)]
+    verification: VerificationPolicy,
+    /// Retained only to report migration to the catalog configuration;
     /// duplicating its rules here is how a config that passes one check and fails the other gets
     /// created.
     #[serde(default)]
     profiles: Option<toml::Value>,
+    #[serde(default)]
+    catalog_path: Option<String>,
     #[serde(default)]
     limits: Option<LimitsSection>,
 }
@@ -49,7 +66,10 @@ struct LimitsSection {
 impl Default for Config {
     fn default() -> Self {
         Config {
+            verification: VerificationPolicy::default(),
             profiles: Profiles::defaults(),
+            catalog_path: None,
+            legacy_profiles: false,
             test_timeout_secs: 1_800,
             native_max_calls: 64,
             native_timeout_secs: 180,
@@ -61,7 +81,15 @@ impl Config {
     /// Resolve the same execution profiles in the engine, broker, receipts and cost records.
     pub fn for_run(store: &crate::state::Store) -> Result<Self> {
         let mut config = Self::load(store.root())?;
-        config.profiles.require_astra_reviewers()?;
+        if store.archive_pending() {
+            return Ok(config);
+        }
+        if let Some(run) = store.read_run()? {
+            crate::catalog::snapshot(store, &run.run_id)?;
+        } else {
+            crate::catalog::configured(store)?;
+        }
+        config.profiles = Profiles::defaults();
         if store
             .read_plan()?
             .is_some_and(|plan| plan.execution_authorization.is_some())
@@ -85,18 +113,17 @@ impl Config {
         let document: Document = toml::from_str(text)
             .map_err(|e| Error::Rejected(format!("{CONFIG_FILE} is not valid: {e}")))?;
 
-        let mut config = Config::default();
-
-        if let Some(profiles) = document.profiles {
-            // Re-serialize just the profiles table so the one parser that knows the effort policy
-            // is the one that reads it.
-            let wrapped = toml::to_string(&toml::Value::Table(
-                [("profiles".to_string(), profiles)].into_iter().collect(),
-            ))
-            .map_err(|e| Error::Internal(e.to_string()))?;
-            config.profiles = Profiles::from_toml(&wrapped)?;
+        let mut config = Config {
+            verification: document.verification,
+            catalog_path: document.catalog_path,
+            legacy_profiles: document.profiles.is_some(),
+            ..Config::default()
+        };
+        if config.verification.reuse_passed
+            && config.verification.environment_revision.trim().is_empty()
+        {
+            return Err(Error::Rejected("verification reuse requires an environment_revision covering toolchain and external dependencies".into()));
         }
-
         if let Some(limits) = document.limits {
             for (name, value, target) in [
                 (
@@ -193,38 +220,20 @@ mod tests {
     }
 
     #[test]
-    fn profiles_are_parsed_by_the_profile_module_including_its_rejections() {
-        let config = Config::parse(
-            r#"
-[profiles.economy]
-model = "gpt-5.6-luna"
-effort = "medium"
-[profiles.critic]
-model = "gpt-6-astra"
-effort = "high"
-[profiles.deep]
-model = "gpt-6-astra"
-effort = "xhigh"
-"#,
+    fn legacy_profiles_are_detected_for_catalog_migration() {
+        let config =
+            Config::parse("[profiles.economy]\nmodel='replacement'\neffort='quick'\n").unwrap();
+        assert!(config.legacy_profiles);
+        let dir = tempfile::tempdir().unwrap();
+        let store = crate::state::Store::open(dir.path()).unwrap();
+        std::fs::create_dir_all(store.root()).unwrap();
+        std::fs::write(
+            store.root().join("config.toml"),
+            "[profiles.economy]\nmodel='replacement'\neffort='quick'\n",
         )
         .unwrap();
-        assert_eq!(config.profiles.spec(Profile::Critic).effort, Effort::High);
-
-        let err = Config::parse(
-            r#"
-[profiles.economy]
-model = "gpt-5.6-luna"
-effort = "low"
-[profiles.critic]
-model = "gpt-6-astra"
-effort = "high"
-[profiles.deep]
-model = "gpt-6-astra"
-effort = "xhigh"
-"#,
-        )
-        .unwrap_err();
-        assert!(err.to_string().contains("low"), "{err}");
+        let error = crate::catalog::configured(&store).unwrap_err().to_string();
+        assert!(error.contains("convert models and efforts"), "{error}");
     }
 
     #[test]

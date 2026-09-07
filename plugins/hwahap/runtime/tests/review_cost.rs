@@ -12,6 +12,8 @@ async fn draft() -> Fixture {
     let engine = f.engine();
     engine
         .start_build(&BuildRequest {
+            task_profiles: Default::default(),
+            verification_inputs: vec![],
             user_instruction: "Implement without planning".into(),
             objective: "Create a checked feature".into(),
             base_branch: "main".into(),
@@ -52,31 +54,19 @@ async fn draft() -> Fixture {
 #[tokio::test]
 async fn completed_native_reviews_refresh_the_final_published_cost_report() {
     use hwahap::native::{NativeCompletion, NativeRegistration, NativeSessions};
-    use hwahap::profile::Profiles;
     use hwahap::session::TokenUsage;
     use std::sync::Arc;
     let f = draft().await;
     let store = Store::open(&f.repo).unwrap();
     let report_path = store.root().join("report.md");
     let before = std::fs::read_to_string(&report_path).unwrap();
-    let published_cost: serde_json::Value = serde_json::from_str(
-        before
-            .split("```json\n")
-            .nth(1)
-            .unwrap()
-            .split("\n```")
-            .next()
-            .unwrap(),
-    )
-    .unwrap();
+    let published_cost: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(store.root().join("usage.json")).unwrap()).unwrap();
     assert_eq!(published_cost["total"]["requests"], 0);
+    assert!(before.contains("Native requests: 0;"));
     let binding = ReviewProgress::load(&store).unwrap().unwrap().binding;
-    let sessions = Arc::new(NativeSessions::new(
-        store.clone(),
-        Profiles::defaults(),
-        64,
-        20,
-    ));
+    common::fixture_assessments(&store);
+    let sessions = Arc::new(NativeSessions::new(store.clone(), 64, 20));
     let engine = f.engine();
     let runner = sessions.clone();
     let task = tokio::spawn(async move { engine.step_with(&*runner, None, None).await });
@@ -98,6 +88,7 @@ async fn completed_native_reviews_refresh_the_final_published_cost_report() {
         let agent_id = format!("independent-reviewer-{n}");
         sessions
             .register(&NativeRegistration {
+                decision_digest: Some(dispatch.decision.digest.clone()),
                 dispatch_id: dispatch.dispatch_id.clone(),
                 agent_id: agent_id.clone(),
             })
@@ -109,6 +100,7 @@ async fn completed_native_reviews_refresh_the_final_published_cost_report() {
         };
         sessions
             .complete(NativeCompletion {
+                decision_digest: Some(dispatch.decision.digest.clone()),
                 dispatch_id: dispatch.dispatch_id.clone(),
                 agent_id,
                 final_message:
@@ -134,16 +126,13 @@ async fn completed_native_reviews_refresh_the_final_published_cost_report() {
     assert_eq!(live["total"]["reported_output_tokens"], 40);
     let after = std::fs::read_to_string(&report_path).unwrap();
     assert_ne!(after, before);
-    let published: serde_json::Value = serde_json::from_str(
-        after
-            .split("```json\n")
-            .nth(1)
-            .unwrap()
-            .split("\n```")
-            .next()
-            .unwrap(),
-    )
-    .unwrap();
+    assert!(
+        after.contains("Native requests: 2; completed: 2; usage reported: 2; missing usage: 0.")
+    );
+    assert!(after.contains(".hwahap/usage.json"));
+    assert!(!after.contains("```json"));
+    let published: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(store.root().join("usage.json")).unwrap()).unwrap();
     assert_eq!(published["total"]["requests"], 2);
     assert_eq!(published["total"]["reported_input_tokens"], 200);
     assert_eq!(published["total"]["reported_output_tokens"], 40);
@@ -164,16 +153,13 @@ async fn completed_native_reviews_refresh_the_final_published_cost_report() {
     assert_eq!(f.engine().ship(&ship).unwrap().state, "shipped");
     let after = std::fs::read_to_string(&report_path).unwrap();
     assert_ne!(after, before);
-    let published: serde_json::Value = serde_json::from_str(
-        after
-            .split("```json\n")
-            .nth(1)
-            .unwrap()
-            .split("\n```")
-            .next()
-            .unwrap(),
-    )
-    .unwrap();
+    assert!(
+        after.contains("Native requests: 2; completed: 2; usage reported: 2; missing usage: 0.")
+    );
+    assert!(after.contains(".hwahap/usage.json"));
+    assert!(!after.contains("```json"));
+    let published: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(store.root().join("usage.json")).unwrap()).unwrap();
     assert_eq!(published["total"]["requests"], 2);
     assert_eq!(published["total"]["reported_input_tokens"], 200);
     assert_eq!(published["total"]["reported_output_tokens"], 40);

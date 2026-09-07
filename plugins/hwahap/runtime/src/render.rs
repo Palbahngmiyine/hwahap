@@ -243,34 +243,15 @@ fn render_recommendation(recommendation: &Recommendation, md: &mut Md) {
 /// readable in a chat message rather than in a document.
 fn render_compact_recommendation(recommendation: &Recommendation, md: &mut Md) {
     match recommendation {
-        Recommendation::Recommended {
-            choice,
-            rationale,
-            evidence,
-            tradeoffs,
-            impact,
-            confidence,
-        } => {
+        Recommendation::Recommended { choice, .. } => {
             md.line(format!("Recommendation: {}", inline(choice)));
-            md.prose_line("Rationale:", rationale);
-            md.id_line("Evidence:", evidence);
-            md.prose_line("Trade-offs:", tradeoffs);
-            md.id_line("Impact:", impact);
-            md.line(format!("Confidence: {}", confidence_label(*confidence)));
         }
-        Recommendation::NoRecommendation { rationale } => {
-            md.line("Recommendation: none");
-            md.prose_line("Rationale:", rationale);
-        }
-        Recommendation::ProbeRequired {
-            probe_unit,
-            rationale,
-        } => {
+        Recommendation::NoRecommendation { .. } => md.line("Recommendation: none"),
+        Recommendation::ProbeRequired { probe_unit, .. } => {
             md.line(format!(
                 "Recommendation: probe {} first",
                 inline(probe_unit)
             ));
-            md.prose_line("Rationale:", rationale);
         }
     }
 }
@@ -343,6 +324,41 @@ fn render_units(plan: &Plan, md: &mut Md) {
             &paths,
         ]);
     }
+    if !plan.task_profiles.is_empty() {
+        md.blank();
+        md.line("### Delegation requirements");
+        md.blank();
+        md.table_header(&[
+            "Task",
+            "Capabilities",
+            "Depth",
+            "Risk: failure / reversibility / impact",
+            "Coupling",
+        ]);
+        for (id, profile) in &plan.task_profiles {
+            md.row(&[
+                id,
+                &profile
+                    .requirements
+                    .capabilities
+                    .iter()
+                    .map(|(k, v)| format!("{k}:{v}"))
+                    .collect::<Vec<_>>()
+                    .join(", "),
+                &format!("{:?}", profile.requirements.depth).to_lowercase(),
+                &[
+                    profile.risk.failure_cost,
+                    profile.risk.reversibility,
+                    profile.risk.blast_radius,
+                ]
+                .iter()
+                .map(|v| v.map(|n| n.to_string()).unwrap_or_else(|| "unknown".into()))
+                .collect::<Vec<_>>()
+                .join(" / "),
+                &format!("{:?}", profile.topology.coupling).to_lowercase(),
+            ]);
+        }
+    }
 }
 
 fn render_tests(plan: &Plan, md: &mut Md) {
@@ -383,6 +399,54 @@ fn render_reviews(plan: &Plan, md: &mut Md) -> Result<()> {
         md,
     );
     render_review("Critic", plan.reviews.critic.as_ref(), &reviewed, md);
+    if !plan.planning_findings.is_empty() {
+        md.blank();
+        md.line("<details><summary>지적과 해결 근거</summary>");
+        md.blank();
+        for finding in &plan.planning_findings {
+            let closed = [
+                plan.reviews.cold_consumer.as_ref(),
+                plan.reviews.critic.as_ref(),
+            ]
+            .into_iter()
+            .all(|r| {
+                r.is_some_and(|r| {
+                    r.passed
+                        && r.plan_digest == reviewed
+                        && crate::planning_review::require_resolutions(
+                            std::slice::from_ref(finding),
+                            &r.findings,
+                        )
+                        .is_ok()
+                })
+            });
+            md.line(format!(
+                "- {} · {}",
+                inline(&finding.summary()),
+                if closed {
+                    "검토 완료"
+                } else {
+                    "검토 대기"
+                }
+            ));
+            for h in plan
+                .decomposition_history
+                .iter()
+                .filter(|h| h.finding_ids.contains(&finding.id))
+            {
+                md.line(format!(
+                    "  - {}: {}",
+                    inline(&h.action),
+                    inline(&h.evidence.join("; "))
+                ));
+                for error in &h.validation {
+                    md.line(format!("  - 검증: {}", inline(error)));
+                }
+            }
+        }
+        md.blank();
+        md.line("</details>");
+    }
     Ok(())
 }
 
@@ -402,7 +466,7 @@ fn render_review(label: &str, review: Option<&PlanReview>, reviewed: &Digest, md
         }
     ));
     for finding in &review.findings {
-        md.line(format!("- {}", inline(finding)));
+        md.line(format!("- {}", inline(&finding.summary())));
     }
 }
 
@@ -624,22 +688,6 @@ impl Md {
         for id in sorted_ids(ids) {
             self.line(format!("- {}", inline(id)));
         }
-    }
-
-    fn prose_line(&mut self, label: &str, items: &[String]) {
-        if items.is_empty() {
-            return;
-        }
-        let joined: Vec<String> = items.iter().map(|item| inline(item)).collect();
-        // Semicolons, not commas: these are sentences, and sentences contain commas.
-        self.line(format!("{label} {}", joined.join("; ")));
-    }
-
-    fn id_line(&mut self, label: &str, ids: &[String]) {
-        if ids.is_empty() {
-            return;
-        }
-        self.line(format!("{label} {}", sorted_join(ids)));
     }
 
     fn finish(mut self) -> String {
@@ -1516,7 +1564,20 @@ mod tests {
             plan_digest: Digest::zero(),
             ts: ts(),
             passed: false,
-            findings: vec!["A2 has no test".into(), "R3 is unfalsifiable".into()],
+            findings: ["A2 has no test", "R3 is unfalsifiable"]
+                .iter()
+                .enumerate()
+                .map(|(i, text)| crate::planning_review::PlanningFinding {
+                    id: format!("PC{}", i + 1),
+                    parent_id: None,
+                    kind: crate::planning_review::FindingKind::Structure,
+                    targets: vec!["U1".into()],
+                    evidence: vec![text.to_string()],
+                    expected: text.to_string(),
+                    status: crate::planning_review::FindingStatus::Open,
+                    depends_on: vec![],
+                })
+                .collect(),
         };
         plan.reviews.critic = Some(stale);
         let rendered = plan_markdown(&plan).unwrap();
@@ -1528,8 +1589,8 @@ mod tests {
                 "Cold consumer: absent\n",
                 "\n",
                 "Critic: present, failed, stale\n",
-                "- A2 has no test\n",
-                "- R3 is unfalsifiable\n",
+                "- PC1: A2 has no test\n",
+                "- PC2: R3 is unfalsifiable\n",
             )
         );
     }
@@ -1812,11 +1873,6 @@ mod tests {
                 "ALT2. 호출하지 않는다\n",
                 "\n",
                 "Recommendation: ALT1\n",
-                "Rationale: keeps validation parity with apply\n",
-                "Evidence: F7\n",
-                "Trade-offs: a webhook failure becomes a dry-run failure\n",
-                "Impact: api, tests\n",
-                "Confidence: high\n",
                 "\n",
                 "Answer forms:\n",
                 "- C<n>=REC — take the recommendation as displayed\n",
@@ -1867,11 +1923,10 @@ mod tests {
             rationale: vec!["no basis".into(), "genuinely a taste call".into()],
         };
         let none = frontier_markdown(&plan, &["C1".into()]).unwrap();
-        assert!(
-            none.contains("Recommendation: none\nRationale: no basis; genuinely a taste call\n"),
-            "{none}"
-        );
+        assert!(none.contains("Recommendation: none\n"), "{none}");
         assert!(!none.contains("Confidence:"), "{none}");
+        assert!(!none.contains("no basis"), "{none}");
+        assert!(plan_markdown(&plan).unwrap().contains("no basis"));
 
         plan.decisions[0].recommendation = Recommendation::ProbeRequired {
             probe_unit: "U9".into(),
