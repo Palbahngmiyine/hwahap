@@ -161,7 +161,6 @@ async fn t09_dependency_revalidates_without_author_call_or_extra_commit() {
         .unwrap();
     engine
         .adjust_build(&AdjustBuildRequest {
-            task_profiles: Default::default(),
             user_instruction: "Correct only one".into(),
             contract_digest: plan.digest().unwrap().to_string(),
             unit_ids: vec!["U1".into()],
@@ -347,7 +346,6 @@ fn adjust_one(fixture: &Fixture) {
     fixture
         .engine()
         .adjust_build(&AdjustBuildRequest {
-            task_profiles: Default::default(),
             user_instruction: "Correct one under unchanged requirements".into(),
             contract_digest: plan.digest().unwrap().to_string(),
             unit_ids: vec!["U1".into()],

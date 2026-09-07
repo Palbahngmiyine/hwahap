@@ -67,13 +67,13 @@ async fn three_occupied_child_slots_complete_three_hundred_jobs_without_replacem
                 Role::UnitReviewer,
                 NativeLane::Critic,
                 "critic",
-                "gpt-6-astra",
+                "gpt-5.6-terra",
             ),
             (
                 Role::FinalReview,
                 NativeLane::Auditor,
                 "auditor",
-                "gpt-6-astra",
+                "gpt-5.6-terra",
             ),
         ] {
             // Recreate the broker for every job so in-memory reuse cannot satisfy this test.

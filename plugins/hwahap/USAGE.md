@@ -191,9 +191,61 @@ bin/hwahap usage show /absolute/repository
 `topology`는 predecessors, coupling, shared_resources, writer_owner, separable, write_paths를 담는다.
 공유 자원은 같은 변경 가능 자원의 ID로 기록한다. 작성 소유자는 unit ID, aggregate 작업은 run ID다.
 배정은 선행 조건 → 역량·깊이 합성 → 위험·공유 상태 → 가용 모델 → 검증 의무 순서다.
-고위험 작성은 적격 부모가 맡고 독립 검토자 둘이 승인한 격리 checkout에서 실패·복구 명령을 먼저 실행한다.
+공유 상태는 작성 순서를 직렬화하며 모델 등급은 요구 역량으로 선택한다. 고위험 작성은 독립 검토자 둘이
+승인한 격리 checkout에서 실패·복구 명령을 먼저 실행한다. `build.task_profiles["run"]`의
+`writer_owner`는 생략하거나 `"run"`으로 보내면 생성된 run ID로 고정한다.
 
 등록·완료에는 요청의 `decision.digest`를 `decision_digest`로 함께 전달한다.
 최초 응답의 전체 brief를 보관하고, 이후 `native_brief.artifact`는 현재 run의 `.hwahap/artifacts`에서 읽는다.
 같은 성공 기준·base commit·테스트로 후보 모델을 비교하고 실패·복구를 포함한 관측값을 기록한다.
 토큰·비용 누락은 `unknown`, 단가표 계산은 추정값으로 표시한다.
+
+
+## Codex Desktop Plan·Goal 연결
+
+Codex Plan에서 승인한 내용을 `approved_plan`으로 가져오고, 실행 상태는 선택적 `host_context`로 연결한다.
+Goal의 생성·예산·일시정지·재개·완료는 호스트가 관리한다. Hwahap은 계약·검증·복구 증거를 제공한다.
+호스트는 실제 제공하는 기능만 `capabilities`에 기록한다. 참조는 추적용 메타데이터이며 실행 승인은
+`approved_plan`의 원문·digest 검증을 따른다.
+
+```json
+{
+  "host_context": {
+    "provider": "codex-desktop",
+    "task_id": "<host_session_id와 같은 현재 작업 ID>",
+    "plan_ref": "<승인 계획 참조>",
+    "goal_ref": "<현재 Goal 참조>",
+    "capabilities": ["plan", "goal"]
+  }
+}
+```
+
+응답의 `host_context`는 참조·run 상태·accepted unit을 제공한다. 호스트는 전체 Goal 성공 조건과
+증거를 비교해 완료를 판정한다. 이 필드를 생략해도 PLAN·BUILD·검증·복구는 동작한다.
+Codex의 [Plan 사용](https://learn.chatgpt.com/docs/prompting)과
+[Goal 수명주기](https://learn.chatgpt.com/docs/long-running-work)는 호스트 안내를 따른다.
+
+## 총비용을 줄이는 실행 설정
+
+- 번들 카탈로그는 요구 역량을 만족하는 Luna 작성자와 Terra 일반 검토자를 우선한다. 고위험 검토는
+  더 높은 보안·반례 검토 역량과 deep을 요구한다. 모델과 effort는 호스트의 실제 지원 범위와 교차 검사한다.
+- `native_wait`에서는 `hwahap_step`이 기본 30초까지 이벤트를 기다린다. `wait_ms:0`은 즉시 조회다.
+  `await_checks`는 CI 완료 이벤트를 기다리고, 실패한 CI를 수정한 뒤 모델 리뷰를 시작한다.
+- 모든 unit과 aggregate 평가가 명시적으로 저위험이고 첫 PR 리뷰가 깨끗하면 독립 검토 한 번으로 완료한다.
+  평가 누락·공유 상태·고위험·발견 결함·수정 이력은 두 검토를 유지한다.
+- 상태는 요약과 artifact 참조를 반환한다. 전체 비용 근거가 필요할 때 `include_cost_evidence:true`를 사용한다.
+- `usage_session_path`는 현재 작업 JSONL을 선택적으로 연결한다. 기준은 연결 시점이며 이전 작업은 별도 관측이다.
+  연결 실패는 `usage_attachment.status:unavailable`로 표시하고 실행 결과를 함께 반환한다.
+
+검증 재사용은 기본적으로 꺼져 있다. 입력·환경을 재현할 수 있는 프로젝트에서 아래 설정을 사용한다.
+
+```toml
+[verification]
+reuse_passed = true
+environment_revision = "toolchain-and-external-dependencies-v1"
+```
+
+`verification_inputs`에 ignored fixture를 포함한 입력을 선언하고, 도구 체인·외부 의존성이 바뀌면
+`environment_revision`을 갱신한다. 같은 run·unit·검사 종류·명령·입력·환경의 최신 성공 기록과
+온전한 출력 artifact만 재사용한다. 환경 변수·OS·아키텍처도 digest에 포함한다. 실패·중단·입력 변경은
+재실행하며, 고위험 사전 복구 검증은 매번 실행한다.

@@ -73,7 +73,6 @@ async fn correction_preserves_contract_revalidates_dependents_and_reviews_same_p
     let plan = store.read_plan().unwrap().unwrap();
     let previous = ReviewProgress::load(&store).unwrap().unwrap();
     let request = AdjustBuildRequest {
-        task_profiles: Default::default(),
         user_instruction: "Correct the contents under the agreed behavior".into(),
         contract_digest: plan.digest().unwrap().to_string(),
         unit_ids: vec!["U1".into()],
@@ -130,7 +129,6 @@ async fn invalid_requests_or_changed_reviewed_state_cannot_start_adjustment() {
     let plan = store.read_plan().unwrap().unwrap();
     let original = store.read_run().unwrap().unwrap();
     let request = AdjustBuildRequest {
-        task_profiles: Default::default(),
         user_instruction: "Correct the implementation".into(),
         contract_digest: plan.digest().unwrap().to_string(),
         unit_ids: vec!["U2".into()],
@@ -176,7 +174,6 @@ async fn adjustment_instruction_survives_implementation_retry_and_leaves_other_u
     let store = Store::open(&f.repo).unwrap();
     let plan = store.read_plan().unwrap().unwrap();
     let request = AdjustBuildRequest {
-        task_profiles: Default::default(),
         user_instruction: "Correct only the second file".into(),
         contract_digest: plan.digest().unwrap().to_string(),
         unit_ids: vec!["U2".into()],

@@ -137,7 +137,7 @@
 - 선행 조건 검사 → 역할과 작업의 역량 요구 합성 → 위험·공유 상태에 따른 route → 가용 후보 선택 → 검증 의무 확정 순서로 처리한다. 요구 수준은 역량별 최댓값, depth는 더 깊은 값을 사용한다.
 - 결합도는 단순 파일 개수로 계산하지 않는다. 부모의 근거와 독립 검토를 사용하고, 실행 시 겹친 write 범위·같은 변경 가능 자원·writer 충돌을 추가 검사한다.
 - 기존 worker의 모델·effort를 유지하며 요구 충족 여부를 매번 평가한다. 부족하면 적격 부모, 부모도 부족하면 `wait`다. 독립 검토 역할은 Critic/Auditor lane을 유지한다.
-- 고위험 작업은 부모 배정, 작성 depth 최소 focused, 검토 depth deep과 복구 검증을 요구한다. 수행 가능한 격리 검증이 마련될 때까지 실제 변경은 대기한다.
+- 고위험 작업은 적격 작성자 배정, 작성 depth 최소 focused, 검토 depth deep과 복구 검증을 요구한다. 수행 가능한 격리 검증이 마련될 때까지 실제 변경은 대기한다.
 - 입력 누락은 `assessment_missing`, 관찰 만료는 `host_stale`, 가용성 문제는 `model_unavailable`, 고정 배정 부족은 `bound_capability_insufficient`, 공유 상태는 `shared_state`로 설명한다.
 - 등록·completion은 현재 dispatch의 판정 digest와 identity·모델·effort를 검사한다. 실패 이후 재시도도 같은 run 예산과 독립성을 유지한다.
 

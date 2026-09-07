@@ -5,7 +5,7 @@ description: "Plan code implementation through decision rounds, or build an expl
 
 # Hwahap
 
-Use a qualified parent from the host inventory. Follow the MCP server's `instructions` as the execution protocol.
+Optimize total successful task cost. Follow the MCP server's `instructions` as the execution protocol.
 Call `hwahap_step` with the repository path and the same stable `host_session_id` throughout.
 
 For a planning request, start `request` with `plan_only:true` and finish at `plan_ready`.
@@ -26,9 +26,10 @@ See [USAGE.md](../../USAGE.md) for UI adaptation. Record answers from actual sub
 keep defaults, cancellation and timeout in a waiting state. Forward user messages verbatim.
 Deliver `CONFIRM PLAN` and `SHIP` as the exact lines typed by the user in a separate message.
 
-Follow each returned `next`, including dispatch, wait, stop and recovery instructions.
+Follow `next`; use event waits for native work and CI. Read artifact detail only when needed.
+Let the host own Plan/Goal lifecycle; attach optional references through `host_context`.
 Perform edits, tests, spawning and publication within the assigned dispatch and its authorization.
-Retain worker identities and roles. Workers complete their assigned tasks directly.
+Use the bound model/effort decision and retain worker identities and roles. Workers perform their tasks directly.
 Use `hwahap_status` for progress and `recheck_pr:true` for the current draft's review recovery.
 Label host-reported answers, requested models and usage with their observation source.
 

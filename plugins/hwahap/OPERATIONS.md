@@ -84,10 +84,11 @@ Source가 바뀐 재계획은 사실·답변·영역 제외를 새 기준에서 
 3. 실행기가 실제 변경 경로와 테스트 종료 상태를 검사하고 Critic이 검토한다.
 4. 실패하면 적격 부모가 한 번 재작업한다. 재실패는 근거를 기록하고 중단한다.
 5. 통과한 변경을 commit하고 모든 unit과 full suite가 완료되면 draft PR을 게시한다.
-6. Critic의 공격 보고서와 별도 Auditor의 방어 판정을 받는다.
+6. CI 결과를 기다리고 실패를 먼저 수정한다. 통과 후 Critic의 공격 보고서와 필요한 Auditor 판정을 받는다.
 7. 확인된 결함은 부모가 수정하고 고정 테스트·full suite를 통과한 뒤 같은 PR에 push해 새 head를 재검토한다.
 
-두 검토자는 읽기 전용으로 작업한다. 보고서는 PR URL·head SHA·계약 digest와 독립된 작업자 ID에 결속한다.
+명시적으로 저위험인 첫 실행의 깨끗한 PR 리뷰는 독립 검토 한 번으로 완료한다.
+그 외에는 두 검토자가 읽기 전용으로 작업한다. 보고서는 PR URL·head SHA·계약 digest와 독립된 작업자 ID에 결속한다.
 방어팀은 각 공격 항목을 `confirmed/refuted/unresolved`로 판정하고 근거를 남긴다.
 미해결 항목이나 실행 예산 소진은 PR과 근거를 보존한 채 중단한다.
 
@@ -129,7 +130,7 @@ Acceptance·테스트·허용 경로 변경은 `user_input`으로 PLAN을 열고
 유효한 accepted unit은 유지하고 변경된 unit과 의존 unit을 다시 수행한다.
 계획·통과 기록은 같은 run에서, 에이전트는 같은 저장소·부모 pool에서 재사용한다.
 
-사용자가 현재 `SHIP <challenge>`를 입력하면 계약 결속, 현재 PR head의 두 독립 검토,
+사용자가 현재 `SHIP <challenge>`를 입력하면 계약 결속, 현재 PR head의 위험 수준에 맞는 독립 검토,
 결함 해결과 필수 checks를 확인한 뒤 draft를 ready로 전환한다.
 이후 코드 소유자 리뷰·merge·배포는 각 작업의 승인과 운영 절차에 따라 진행한다.
 

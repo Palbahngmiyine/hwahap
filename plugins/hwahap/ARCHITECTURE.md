@@ -16,7 +16,7 @@ ADJUST에서 계약 변경은 PLAN으로, 계약 내 구현 수정은 BUILD로 �
 | PLAN FREEZE | Rust validator + Deep Auditor + Critic | ID 연결·의존관계·필수 필드 검사, 작성자와 독립된 계약 검토 | `CONFIRM PLAN <challenge>` 정확히 입력 |
 | PLAN READY | Rust 실행기 | `plan_only:true`인 계획을 확정하고 대기 | 원할 때 확정 계획의 BUILD를 명시적으로 요청 |
 | CODING | Economy(첫 구현) + Deep(재작업) + Critic(리뷰) | unit을 순서대로 구현·검증·리뷰하고 통과한 변경을 commit | 승인 범위 충돌 시 결정 |
-| DRAFT PR / PR REVIEW | Critic + 별도 Auditor | full suite 후 draft 게시, 공격 보고서·방어 판정, 확인된 결함 수정 후 새 head 재검토 | 결과 확인 |
+| DRAFT PR / PR REVIEW | 독립 검토자 1–2명 | CI 성공 후 위험에 맞게 검토하고 결함 수정 후 새 head 재검토 | 결과 확인 |
 | ADJUST / SHIP | — | 계약 변경은 PLAN 재확인, 계약 내 수정은 BUILD 재검증, 완료된 draft는 ready로 | 변경 의도 전달 또는 `SHIP <challenge>` 정확히 입력 |
 
 `request`와 `plan_only:true`로 시작하면 `CONFIRM PLAN` 이후 `plan_ready`에서 끝난다. 구현은 이후 사용자의
@@ -116,7 +116,8 @@ run 생성 시 revision과 digest를 고정하며 교체한 카탈로그는 새 
 | 조건 | 작성 배정 | 검증 |
 |---|---|---|
 | 독립적이고 요구 역량을 충족 | Worker | Critic·Auditor 확보 |
-| 공유 변경 상태 또는 고위험 | 적격 부모 | 독립 검토와 격리 복구 검증 |
+| 공유 변경 상태 | 요구 역량을 충족하는 작성자 | 같은 자원 작성 직렬화 |
+| 고위험 | 요구 역량을 충족하는 작성자 | 강한 독립 검토와 격리 복구 검증 |
 | 기존 Worker의 역량 부족 | 적격 부모, 없으면 대기 | 기존 identity 유지 |
 | 모델·effort·슬롯 부족 | 대기 | 호스트 관찰 갱신 후 재평가 |
 
@@ -133,7 +134,7 @@ Worker·Critic·Auditor는 run과 부모별로 identity를 유지하며 검토�
 중단 확인 뒤 후보 백업을 이용해 복구하며 실패로 소비한 시도 횟수를 유지한다.
 [운영 절차](OPERATIONS.md#6-중단-상태별-대응)와 [설정](USAGE.md#모델-카탈로그와-작업-평가)을 따른다.
 
-총비용 개선은 불필요한 계획용 하위 에이전트 생성과 반복 실패를 줄이는 방향이다. 상태·보고서에는
+총비용 개선은 승인 계획 재사용, 적격 모델·effort 선택, 이벤트 대기와 검증 재사용으로 반복 작업을 줄인다. 상태·보고서에는
 요청·완료·중단·미완료·생성 실패·복구 수, requested model별 보고 토큰과 보고 비율을 남긴다. 호스트 처리와 하위
 에이전트의 사용량 보고 비율은 구분한다. 명시적으로 등록한 부모·자식 세션의 누적 카운터 차이를 `.hwahap/usage.json`에 저장한다.
 등록 전 작업과 수집 실패는 누락으로 표시한다. 세션 합계와 dispatch 합계는 각각 표시한다.
@@ -143,10 +144,15 @@ Worker·Critic·Auditor는 run과 부모별로 identity를 유지하며 검토�
 PR 공격·방어 결과는 PR URL·head SHA·계약 digest에 결속한다. 방어자는 공격 항목마다
 `confirmed/refuted/unresolved`와 근거를 제출한다. 미해결은 중단하고, 확인된 결함은 부모가 수정해
 모든 구현 unit의 고정 테스트와 full suite·commit·같은 PR push 이후 두 팀이 다시 검토한다.
+CI 대기·실패는 모델 검토 전에 처리한다. 명시적으로 저위험인 첫 실행의 깨끗한 리뷰는 독립 검토 한 번으로
+완료하며 SHIP에서 같은 계약·head·검증·검토자 증거를 다시 확인한다. 상세 조건은 [USAGE](USAGE.md)를 따른다.
 테스트 실패 시 명령·출력·patch를 보존한 뒤 해당 시도를 초기화하고 남은 예산으로 재시도한다.
 리뷰 요청은 commit 범위와 파일 목록을 전달하며, 각 검토자가 로컬에서 전체 diff를 읽는다.
 PR 보고서는 검토·수정 후와 SHIP 직전에 현재 검토·사용량 근거로 갱신한다. 저장된 공격 보고서는 방어 단절 후 재사용한다.
 `hwahap_step(recheck_pr=true)`는 기존 draft를 다시 검증하며 누적 수정 예산을 유지한다.
+
+Codex Plan·Goal 연결은 선택적 `host_context`를 사용한다. 호스트가 계획 UI와 Goal 수명주기를 소유하고,
+실행기는 승인 변환·범위·검증·복구를 제공한다. 외부 참조는 완료 권한과 분리해 기록한다.
 
 ## 6. 테스트 규칙
 

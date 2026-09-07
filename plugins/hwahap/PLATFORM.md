@@ -109,3 +109,23 @@ Worker·Critic·Auditor는 run과 부모별로 identity·역할·모델·effort�
 재시도·진행 중·중단 요청을 포함하며, requested model별 토큰과 보고 비율은 호스트의 계수를 사용한다.
 사용량 미계측은 `unknown`으로 표시한다. 로컬 세션 관측과 가격표 기반 추정은 [USAGE.md](USAGE.md)를 따른다.
 손상된 JSON, cached input이 total input보다 큰 값, 정수 overflow는 오류로 처리한다.
+
+
+## 6. 0.1.1 비용 개선 후보의 실제 native 실행
+
+2026-09-07 macOS에서 후보 MCP 0.1.1과 실제 Codex 하위 에이전트로 임시 Git 저장소를 실행했다.
+`normalize_ids`가 공백·빈 문자열·중복·순서·대소문자·입력 보존을 처리하는 한 unit이 대상이었다.
+
+| 확인 항목 | 결과 |
+|---|---|
+| 구현 배정 | Luna/medium, native 완료 1회 |
+| 독립 검토 배정 | Terra/medium, pass·finding 0개 |
+| 런타임 인수 검사 | 고정 unittest 4개 통과 |
+| 도달 상태 | U1 accepted·commit 생성, `final_verifying` |
+| Goal 연결 | 호스트 소유권과 accepted unit이 상태에 함께 표시됨 |
+| 사용량·청구액 | 미계측, `unknown` |
+
+이 실행은 모델 배정·등록·완료·독립 검토·인수 경로를 검증한다. 공개 PR·릴리스는 이 저장소의
+별도 배포 검증으로 확인한다. 기존 구현과 동일 조건의 대규모 품질·비용 비교는 추가 관측 범위다.
+MCP 초기 지침은 기준 `c11cdf7`의 10,717 UTF-8 바이트에서 5,388바이트로 49.7% 줄었다.
+바이트 크기는 토큰 수·캐시 효과·청구액과 별도로 해석한다.
