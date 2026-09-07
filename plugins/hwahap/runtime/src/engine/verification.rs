@@ -30,6 +30,9 @@ impl Engine {
             tree: self.git.run_in(cwd, &["write-tree"])?,
             code: self.git.fingerprint(cwd)?,
             inputs: verification::inputs::digest(cwd, &plan.verification_inputs)?,
+            environment: Some(verification::environment_digest(
+                &self.config.verification.environment_revision,
+            )),
         })
     }
 
@@ -43,6 +46,20 @@ impl Engine {
         cwd: &Path,
     ) -> Result<CommandOutput> {
         let request = self.verification_request(plan, unit, test, kind.clone(), command, cwd)?;
+        if self.config.verification.reuse_passed {
+            if let Some((id, combined)) = verification::reusable_pass(&self.store, &request)? {
+                self.store.append_event(
+                    &*self.clock,
+                    "verification_reused",
+                    serde_json::json!({"verification_id":id,"request":request}),
+                )?;
+                return Ok(CommandOutput {
+                    success: true,
+                    exit_code: Some(0),
+                    combined,
+                });
+            }
+        }
         let record = verification::start(&self.store, &*self.clock, request.clone())?;
         let result = self
             .run_command_owned(cwd, command, 1024 * 1024, Some(&record.id))

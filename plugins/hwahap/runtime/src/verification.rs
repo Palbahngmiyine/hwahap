@@ -28,6 +28,8 @@ pub struct VerificationRequest {
     pub tree: String,
     pub code: Digest,
     pub inputs: Digest,
+    #[serde(default)]
+    pub environment: Option<Digest>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -295,4 +297,59 @@ pub fn require_stopped(store: &Store) -> Result<()> {
         )));
     }
     Ok(())
+}
+
+/// Only the latest logical attempt may satisfy reuse, with intact output and exact identity.
+pub fn reusable_pass(
+    store: &Store,
+    request: &VerificationRequest,
+) -> Result<Option<(String, String)>> {
+    let records = recover_verifications(store)?;
+    if records.values().any(|r| r.status == Status::Started) {
+        return Err(rejected(
+            "verification recovery requires confirmation that previous commands stopped",
+        ));
+    }
+    let latest = records
+        .values()
+        .filter(|r| {
+            r.request.run_id == request.run_id
+                && r.request.unit_id == request.unit_id
+                && r.request.test_id == request.test_id
+                && r.request.kind == request.kind
+        })
+        .max_by_key(|r| r.attempt);
+    let Some(record) = latest.filter(|r| {
+        r.status == Status::Passed && r.request == *request && request.environment.is_some()
+    }) else {
+        return Ok(None);
+    };
+    let path = store.artifacts_path().join(output_name(&record.id)?);
+    let output = std::fs::read_to_string(&path).map_err(|e| Error::io(&path, e))?;
+    Ok(Some((record.id.clone(), output)))
+}
+
+pub fn environment_digest(revision: &str) -> Digest {
+    let mut vars: Vec<_> = std::env::vars_os()
+        .filter(|(k, _)| k != "HWAHAP_VERIFICATION_ID")
+        .collect();
+    vars.sort();
+    let mut bytes = Vec::new();
+    for value in [
+        "hwahap-verification-env-v1",
+        std::env::consts::OS,
+        std::env::consts::ARCH,
+        revision,
+    ] {
+        bytes.extend_from_slice(&(value.len() as u64).to_le_bytes());
+        bytes.extend_from_slice(value.as_bytes());
+    }
+    for (key, value) in vars {
+        for item in [key, value] {
+            let value = item.as_encoded_bytes();
+            bytes.extend_from_slice(&(value.len() as u64).to_le_bytes());
+            bytes.extend_from_slice(value);
+        }
+    }
+    Digest::of_bytes(&bytes)
 }

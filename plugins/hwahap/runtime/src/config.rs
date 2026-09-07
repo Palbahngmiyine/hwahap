@@ -13,9 +13,20 @@ use crate::profile::Profiles;
 /// The file read from `<repo>/.hwahap/config.toml`, if it exists.
 pub const CONFIG_FILE: &str = "config.toml";
 
+/// Explicit reproducibility contract; mutable external tests run on every request.
+#[derive(Debug, Clone, Default, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct VerificationPolicy {
+    #[serde(default)]
+    pub reuse_passed: bool,
+    #[serde(default)]
+    pub environment_revision: String,
+}
+
 /// Everything Hwahap needs beyond the plan itself.
 #[derive(Debug, Clone)]
 pub struct Config {
+    pub verification: VerificationPolicy,
     pub profiles: Profiles,
     pub catalog_path: Option<String>,
     pub legacy_profiles: bool,
@@ -28,6 +39,8 @@ pub struct Config {
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct Document {
+    #[serde(default)]
+    verification: VerificationPolicy,
     /// Retained only to report migration to the catalog configuration;
     /// duplicating its rules here is how a config that passes one check and fails the other gets
     /// created.
@@ -53,6 +66,7 @@ struct LimitsSection {
 impl Default for Config {
     fn default() -> Self {
         Config {
+            verification: VerificationPolicy::default(),
             profiles: Profiles::defaults(),
             catalog_path: None,
             legacy_profiles: false,
@@ -100,10 +114,16 @@ impl Config {
             .map_err(|e| Error::Rejected(format!("{CONFIG_FILE} is not valid: {e}")))?;
 
         let mut config = Config {
+            verification: document.verification,
             catalog_path: document.catalog_path,
             legacy_profiles: document.profiles.is_some(),
             ..Config::default()
         };
+        if config.verification.reuse_passed
+            && config.verification.environment_revision.trim().is_empty()
+        {
+            return Err(Error::Rejected("verification reuse requires an environment_revision covering toolchain and external dependencies".into()));
+        }
         if let Some(limits) = document.limits {
             for (name, value, target) in [
                 (

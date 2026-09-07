@@ -33,6 +33,7 @@ fn request() -> VerificationRequest {
         tree: "b".repeat(40),
         code: Digest::of_bytes(b"code"),
         inputs: Digest::of_bytes(b"inputs"),
+        environment: Some(Digest::of_bytes(b"environment")),
     }
 }
 
@@ -692,4 +693,71 @@ fn t11_intermediate_link_destination_changes_the_input_digest() {
     std::fs::remove_file(dir.path().join("middle")).unwrap();
     symlink("second", dir.path().join("middle")).unwrap();
     assert_ne!(before, inputs::digest(dir.path(), &declared).unwrap());
+}
+
+#[test]
+fn reuse_requires_explicit_environment_and_latest_intact_success() {
+    let dir = tempfile::tempdir().unwrap();
+    let store = Store::open(dir.path()).unwrap();
+    let clock = FixedClock::new("2026-09-07T00:00:00Z");
+    let request = request();
+    let record = start(&store, &clock, request.clone()).unwrap();
+    assert!(reusable_pass(&store, &request).is_err());
+    let passed =
+        record_verification(&store, &clock, record, Status::Passed, Some(0), "passed").unwrap();
+    assert_eq!(
+        reusable_pass(&store, &request).unwrap(),
+        Some((passed.id.clone(), "passed".into()))
+    );
+    for field in [
+        "head",
+        "tree",
+        "code",
+        "inputs",
+        "environment",
+        "command",
+        "contract",
+    ] {
+        let mut changed = serde_json::to_value(&request).unwrap();
+        changed[field] = if matches!(field, "code" | "inputs" | "environment" | "contract") {
+            serde_json::to_value(Digest::of_bytes(b"changed")).unwrap()
+        } else {
+            serde_json::json!("changed")
+        };
+        assert!(
+            reusable_pass(&store, &serde_json::from_value(changed).unwrap())
+                .unwrap()
+                .is_none()
+        );
+    }
+    let mut unknown = request.clone();
+    unknown.environment = None;
+    assert!(reusable_pass(&store, &unknown).unwrap().is_none());
+    let retry = start(&store, &clock, request.clone()).unwrap();
+    record_verification(&store, &clock, retry, Status::Failed, Some(1), "failed").unwrap();
+    assert!(reusable_pass(&store, &request).unwrap().is_none());
+    std::fs::write(
+        store
+            .artifacts_path()
+            .join(format!("verification-{}.output", passed.id)),
+        "tampered",
+    )
+    .unwrap();
+    assert!(reusable_pass(&store, &request).is_err());
+}
+
+#[test]
+fn reuse_configuration_requires_an_environment_revision() {
+    use hwahap::config::Config;
+    assert!(!Config::default().verification.reuse_passed);
+    assert!(Config::parse("[verification]\nreuse_passed=true").is_err());
+    assert!(
+        Config::parse(
+            "[verification]\nreuse_passed=true\nenvironment_revision='toolchain-fixture-v1'"
+        )
+        .unwrap()
+        .verification
+        .reuse_passed
+    );
+    assert_ne!(environment_digest("v1"), environment_digest("v2"));
 }
