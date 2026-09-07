@@ -58,6 +58,11 @@ fn resolve_links(
     let mut cursor = std::path::PathBuf::new();
     for component in path.components() {
         match component {
+            // A Windows verbatim drive prefix becomes a filesystem path at RootDir.
+            Component::Prefix(_) => {
+                cursor.push(component.as_os_str());
+                continue;
+            }
             Component::CurDir => continue,
             Component::ParentDir => {
                 cursor.pop();
