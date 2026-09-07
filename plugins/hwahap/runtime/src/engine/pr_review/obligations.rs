@@ -79,7 +79,10 @@ impl Engine {
         self.require_current_verifications(plan)?;
         for unit in &plan.units {
             for obligation in revalidation::obligations(&self.store, &run.run_id, &unit.id)? {
-                if obligation.evidence_kind != "pr_finding" {
+                if !matches!(
+                    obligation.evidence_kind.as_str(),
+                    "pr_finding" | "ci_failure"
+                ) {
                     continue;
                 }
                 let source: serde_json::Value = serde_json::from_str(&obligation.evidence_ref)

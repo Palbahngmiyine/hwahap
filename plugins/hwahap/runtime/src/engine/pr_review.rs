@@ -115,6 +115,42 @@ impl Engine {
         }
         let a: ReviewRecord<AttackReport> = read_evidence(&self.store, &p.artifact("attack")?)?
             .ok_or_else(|| Error::Corrupt("missing attack report".into()))?;
+        if read_evidence::<ReviewBindingProof>(&self.store, &p.artifact("single-review")?)?
+            .is_some_and(|proof| proof.binding == p.binding)
+        {
+            if !single_review_eligible(plan)
+                || p.repairs > 0
+                || !a.report.findings.is_empty()
+                || a.report.security.blocked()
+            {
+                return Err(Error::Rejected(
+                    "single review no longer satisfies the frozen risk policy".into(),
+                ));
+            }
+            a.report.validate(&p.binding)?;
+            self.verify_session_receipt(
+                &a.receipt,
+                &SessionSpec {
+                    assessment: crate::delegation::store::load(
+                        &self.store,
+                        Role::UnitReviewer,
+                        None,
+                    )?,
+                    cwd: self.store.worktree_path(),
+                    role: Role::UnitReviewer,
+                    unit: None,
+                    prompt: String::new(),
+                },
+            )?;
+            let SessionReceipt::Native(receipt) = &a.receipt;
+            if receipt.agent_id == "coordinator" {
+                return Err(Error::Rejected(
+                    "single review requires an independent reviewer".into(),
+                ));
+            }
+            self.require_current_verifications(plan)?;
+            return Ok(());
+        }
         let d: ReviewRecord<DefenseReport> =
             read_evidence(&self.store, &p.artifact("defense")?)?
                 .ok_or_else(|| Error::Corrupt("missing defense report".into()))?;
@@ -158,6 +194,38 @@ impl Engine {
             return self.repair_pr(run, sessions).await;
         }
         let mut progress = self.require_review_progress(&run, &plan)?;
+        let checks = self
+            .forge
+            .check_results(&self.store.worktree_path(), &progress.binding.pr_url)?;
+        if checks.iter().any(|c| !crate::forge::check_succeeded(c)) {
+            let pending = checks.iter().any(|c| {
+                c["conclusion"].as_str().is_none_or(str::is_empty)
+                    && !matches!(c["state"].as_str(), Some("SUCCESS" | "FAILURE" | "ERROR"))
+            });
+            if pending {
+                let mut outcome = self.report(
+                    &run,
+                    "CI 실행 중입니다. 호스트의 검사 완료 알림 후 진행하세요.".into(),
+                );
+                outcome.next = "await_checks".into();
+                return Ok(outcome);
+            }
+            self.require_review_progress(&run, &plan)?;
+            save_evidence(
+                &self.store,
+                &progress.artifact("ci-failure")?,
+                &CiFailure {
+                    binding: progress.binding.clone(),
+                    checks,
+                },
+            )?;
+            progress.stage = ReviewStage::Repair;
+            progress.save(&self.store)?;
+            return Ok(self.report(
+                &run,
+                "CI 실패를 기록했습니다. 모델 리뷰에 앞서 해당 검사부터 수정합니다.".into(),
+            ));
+        }
         let revision = format!(
             "{}...{}",
             plan.base_commit.as_deref().unwrap_or(&plan.base_branch),
@@ -180,6 +248,36 @@ impl Engine {
         attack.report.validate(&progress.binding)?;
         self.require_review_progress(&run, &plan)?;
         save_evidence(&self.store, &progress.artifact("attack")?, &attack)?;
+        if single_review_eligible(&plan)
+            && progress.repairs == 0
+            && attack.report.findings.is_empty()
+            && !attack.report.security.blocked()
+        {
+            let SessionReceipt::Native(receipt) = &attack.receipt;
+            if receipt.agent_id == "coordinator" {
+                return Err(Error::Rejected(
+                    "single review requires an independent reviewer".into(),
+                ));
+            }
+            self.require_current_verifications(&plan)?;
+            save_evidence(
+                &self.store,
+                &progress.artifact("single-review")?,
+                &ReviewBindingProof {
+                    binding: progress.binding.clone(),
+                },
+            )?;
+            progress.stage = ReviewStage::Complete;
+            run.reviewed_head = Some(progress.binding.head.clone());
+            run.state = RunState::AwaitingAdjustOrShip {
+                pr_url: progress.binding.pr_url.clone(),
+                challenge: plan.digest()?.challenge(),
+            };
+            progress.save(&self.store)?;
+            self.refresh_review_report(&run, &plan, &progress)?;
+            self.store.write_run(&*self.clock, &run)?;
+            return Ok(self.report(&run, self.describe(&run, Some(&plan))?));
+        }
         progress.stage = ReviewStage::Defense;
         progress.save(&self.store)?;
         let defense: ReviewRecord<DefenseReport> = self
@@ -379,5 +477,72 @@ mod independent_catalog_review {
             Engine::separate_reviewers(&attack, &receipt(Role::FinalReview, "coordinator"))
                 .is_err()
         );
+    }
+}
+
+#[derive(serde::Serialize, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ReviewBindingProof {
+    binding: crate::pr_review::ReviewBinding,
+}
+
+/// Only a frozen, complete low-risk profile opts into one clean independent PR review.
+fn single_review_eligible(plan: &Plan) -> bool {
+    std::iter::once("run")
+        .chain(
+            plan.units
+                .iter()
+                .filter(|u| !u.probe)
+                .map(|u| u.id.as_str()),
+        )
+        .all(|id| {
+            plan.task_profiles.get(id).is_some_and(|p| {
+                [
+                    p.risk.failure_cost,
+                    p.risk.reversibility,
+                    p.risk.blast_radius,
+                ]
+                .into_iter()
+                .all(|v| v == Some(0))
+                    && p.topology.separable
+                    && p.topology.coupling == crate::delegation::Coupling::Independent
+                    && p.topology.shared_resources.is_empty()
+                    && p.requirements.depth <= crate::catalog::Depth::Focused
+                    && p.requirements.capabilities.values().all(|v| *v <= 2)
+                    && !p.evidence.is_empty()
+            })
+        })
+}
+
+#[derive(serde::Serialize, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+struct CiFailure {
+    binding: crate::pr_review::ReviewBinding,
+    checks: Vec<serde_json::Value>,
+}
+
+#[cfg(test)]
+mod policy_tests {
+    use super::*;
+    #[test]
+    fn single_review_requires_every_frozen_profile_to_be_low_risk() {
+        let mut plan = Plan::new("run", "main", "fixture");
+        let profile = serde_json::from_value(serde_json::json!({"requirements":{"capabilities":{},"depth":"focused"},"risk":{"failure_cost":0,"reversibility":0,"blast_radius":0},"topology":{"predecessors":[],"coupling":"independent","shared_resources":[],"writer_owner":null,"separable":true,"write_paths":[]},"evidence":["isolated fixture"],"recovery":null})).unwrap();
+        assert!(!single_review_eligible(&plan));
+        plan.task_profiles.insert("run".into(), profile);
+        plan.units.push(Unit {
+            id: "U1".into(),
+            title: "fixture".into(),
+            paths: vec!["feature".into()],
+            acceptance_ids: vec![],
+            depends_on: vec![],
+            probe: false,
+        });
+        assert!(!single_review_eligible(&plan));
+        plan.task_profiles
+            .insert("U1".into(), plan.task_profiles["run"].clone());
+        assert!(single_review_eligible(&plan));
+        plan.task_profiles.get_mut("U1").unwrap().risk.failure_cost = Some(2);
+        assert!(!single_review_eligible(&plan));
     }
 }

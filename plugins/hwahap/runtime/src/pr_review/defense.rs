@@ -105,7 +105,10 @@ pub struct ReviewProgress {
 
 impl ReviewProgress {
     pub fn artifact(&self, team: &str) -> Result<String> {
-        if !matches!(team, "attack" | "defense" | "repair") {
+        if !matches!(
+            team,
+            "attack" | "defense" | "repair" | "single-review" | "ci-failure"
+        ) {
             return Err(Error::Rejected("invalid review artifact team".into()));
         }
         Ok(format!(

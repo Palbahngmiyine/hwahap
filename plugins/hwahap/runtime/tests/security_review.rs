@@ -146,3 +146,40 @@ async fn recheck_rejects_obsolete_report_without_rewriting_evidence() {
     assert_eq!(ReviewProgress::load(&store).unwrap().unwrap(), progress);
     assert_eq!(std::fs::read(path).unwrap(), bytes);
 }
+
+#[tokio::test]
+async fn failed_ci_enters_repair_without_spending_review_calls() {
+    let f = draft().await;
+    let store = Store::open(&f.repo).unwrap();
+    f.fail_checks();
+    let engine = f.engine();
+    let empty = Script::new(vec![]);
+    engine.step_with(&empty, None, None).await.unwrap();
+    let progress = ReviewProgress::load(&store).unwrap().unwrap();
+    assert_eq!(progress.stage, hwahap::pr_review::ReviewStage::Repair);
+    assert!(!store
+        .artifacts_path()
+        .join(progress.artifact("attack").unwrap())
+        .exists());
+    let repair = Script::new(vec![step(
+        Role::Rework,
+        Reply::write(
+            &[("feature.txt", "repaired\n")],
+            r#"{"status":"completed","summary":"fixed CI","conflict":null}"#,
+        ),
+    )]);
+    engine.step_with(&repair, None, None).await.unwrap();
+    assert_eq!(repair.remaining(), 0);
+    std::fs::remove_file(f.dir.path().join("checks-fail")).unwrap();
+    let reviews = Script::new(vec![
+        step(Role::UnitReviewer, Reply::PrAttack),
+        step(Role::FinalReview, Reply::pr_defense()),
+    ]);
+    let done = engine.step_with(&reviews, None, None).await.unwrap();
+    assert_eq!(done.state, "awaiting_adjust_or_ship");
+    assert!(
+        hwahap::revalidation::obligations(&store, &done.run_id, "U1")
+            .unwrap()
+            .is_empty()
+    );
+}
