@@ -158,6 +158,15 @@ checks pass, and the final review is still fresh.";
 /// Arguments to `hwahap_step`.
 #[derive(Debug, Clone, Deserialize, JsonSchema)]
 pub struct StepArgs {
+    /// Include full cost evidence; the default returns a bounded summary and artifact reference.
+    #[serde(default)]
+    pub include_cost_evidence: bool,
+    /// Optional host-provided session log, attached with a current-usage baseline.
+    #[serde(default)]
+    pub usage_session_path: Option<String>,
+    /// Wait for engine work inside this call, at most 30 seconds. Zero returns immediately.
+    #[serde(default = "default_wait_ms")]
+    pub wait_ms: u64,
     /// Parent assessment bound to the current task and contract.
     #[serde(default)]
     pub task_assessment: Option<crate::delegation::TaskAssessment>,
@@ -220,6 +229,8 @@ pub struct StepArgs {
 /// Arguments to `hwahap_status`.
 #[derive(Debug, Clone, Deserialize, JsonSchema)]
 pub struct StatusArgs {
+    #[serde(default)]
+    pub include_cost_evidence: bool,
     /// Absolute path to the repository whose run should be reported.
     pub cwd: String,
 }
@@ -290,7 +301,20 @@ impl From<StepOutcome> for RunReport {
     }
 }
 
+fn default_wait_ms() -> u64 {
+    30_000
+}
+
 impl RunReport {
+    pub fn compact_native(&mut self) {
+        if let Some(dispatch) = self.native_dispatch.as_mut() {
+            self.native_brief = Some(NativeBriefReference {
+                artifact: format!("native-request-{}.json", dispatch.dispatch_id),
+                prompt_digest: dispatch.prompt_digest.clone(),
+            });
+            dispatch.brief.clear();
+        }
+    }
     fn attach_questions(&mut self, root: &std::path::Path) -> crate::Result<()> {
         if self.state == "deciding" && self.next == "await_user" {
             if let Some(plan) = crate::state::Store::open(root)?.read_plan()? {
@@ -369,7 +393,8 @@ impl Hwahap {
         Parameters(args): Parameters<StepArgs>,
     ) -> Result<Json<RunReport>, ErrorData> {
         let root = root_for(&args.cwd)?;
-        let outcome = self
+        let host_session_id = args.host_session_id.clone();
+        let mut outcome = self
             .native
             .advance(
                 &root,
@@ -397,12 +422,33 @@ impl Hwahap {
             )
             .await
             .map_err(to_error_data)?;
+        if outcome.dispatch.is_none() && outcome.outcome.next == "native_wait" && args.wait_ms > 0 {
+            self.native
+                .wait_ready(&root, args.wait_ms.min(30_000))
+                .await;
+            outcome = self
+                .native
+                .advance(
+                    &root,
+                    NativeInput {
+                        host_session_id: Some(host_session_id),
+                        ..Default::default()
+                    },
+                )
+                .await
+                .map_err(to_error_data)?;
+        }
+        let store = crate::state::Store::open(&root).map_err(to_error_data)?;
+        if let Some(path) = args.usage_session_path {
+            crate::cost::meter::attach(&store, std::path::Path::new(&path), false)
+                .map_err(to_error_data)?;
+        }
         let mut report = RunReport::from(outcome);
         report.attach_questions(&root).map_err(to_error_data)?;
-        report.cost_evidence = Some(
-            crate::cost::persist(&crate::state::Store::open(&root).map_err(to_error_data)?)
-                .map_err(to_error_data)?,
-        );
+        report.cost_evidence = Some(crate::cost::for_report(
+            crate::cost::persist(&store).map_err(to_error_data)?,
+            args.include_cost_evidence,
+        ));
         Ok(Json(report))
     }
 
@@ -427,10 +473,12 @@ impl Hwahap {
         let outcome = self.native.status(&root).await.map_err(to_error_data)?;
         let mut report = RunReport::from(outcome);
         report.attach_questions(&root).map_err(to_error_data)?;
-        report.cost_evidence = Some(
+        report.compact_native();
+        report.cost_evidence = Some(crate::cost::for_report(
             crate::cost::summary(&crate::state::Store::open(&root).map_err(to_error_data)?)
                 .map_err(to_error_data)?,
-        );
+            args.include_cost_evidence,
+        ));
         Ok(Json(report))
     }
 

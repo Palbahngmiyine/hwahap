@@ -195,6 +195,10 @@ async fn t16_native_request_binds_model_identity_decision_and_compacts_registere
         })
     };
     let offered = serde_json::to_vec(&report(dispatch.clone())).unwrap();
+    let mut status = report(dispatch.clone());
+    status.compact_native();
+    assert!(status.native_dispatch.as_ref().unwrap().brief.is_empty());
+    assert!(serde_json::to_vec(&status).unwrap().len() < offered.len() / 5);
     let artifact = store
         .artifacts_path()
         .join(format!("native-request-{}.json", dispatch.dispatch_id));

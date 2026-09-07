@@ -843,3 +843,32 @@ async fn t14_execution_deadline_starts_at_registration_after_bounded_handoff() {
     task.await.unwrap().unwrap();
     broker.finish().unwrap();
 }
+
+#[tokio::test]
+async fn host_wait_wakes_for_offered_dispatch_without_model_polling() {
+    use hwahap::native::{NativeHost, NativeInput};
+    let (temp, _, _) = fixture(5, 30).await;
+    let host = NativeHost::default();
+    common::fixture_assessments(&Store::open(temp.path()).unwrap());
+    host.advance(temp.path(), NativeInput::default())
+        .await
+        .unwrap();
+    tokio::time::timeout(Duration::from_secs(3), host.wait_ready(temp.path(), 30_000))
+        .await
+        .unwrap();
+    let result = host
+        .advance(temp.path(), NativeInput::default())
+        .await
+        .unwrap();
+    assert!(result.dispatch.is_some());
+    host.shutdown().await;
+}
+
+#[test]
+fn cost_progress_is_bounded_and_detailed_evidence_stays_available() {
+    let value = serde_json::json!({"total":{"requests":100},"total_billed_cost":"unknown","limits":"overlapping counters", "evaluation":{"model_selections":vec!["x".repeat(1000);100]}});
+    let compact = hwahap::cost::for_report(value.clone(), false);
+    assert!(serde_json::to_vec(&compact).unwrap().len() < 1000);
+    assert_eq!(compact["total"]["requests"], 100);
+    assert_eq!(hwahap::cost::for_report(value.clone(), true), value);
+}

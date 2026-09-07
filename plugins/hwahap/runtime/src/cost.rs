@@ -409,3 +409,17 @@ mod tests {
         assert!(summary(&store).is_err());
     }
 }
+
+/// Full evidence remains on disk; ordinary progress stays bounded as dispatch history grows.
+pub fn for_report(value: serde_json::Value, detailed: bool) -> serde_json::Value {
+    if detailed {
+        return value;
+    }
+    serde_json::json!({
+        "artifact": ".hwahap/usage.json",
+        "total": value["total"],
+        "total_billed_cost": value["total_billed_cost"],
+        "limits": value["limits"],
+        "evaluation": {"run_id":value["evaluation"]["run_id"], "state":value["evaluation"]["state"], "accepted_units":value["evaluation"]["accepted_units"], "pr_repair_attempts":value["evaluation"]["pr_repair_attempts"]}
+    })
+}

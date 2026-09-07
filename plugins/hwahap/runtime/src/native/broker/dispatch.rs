@@ -113,6 +113,9 @@ impl NativeSessions {
                 sender: Some(sender),
             });
         }
+        if let Some(changed) = &self.changed {
+            changed.notify_waiters();
+        }
         let registration = async {
             loop {
                 let notified = self.registered.notified();

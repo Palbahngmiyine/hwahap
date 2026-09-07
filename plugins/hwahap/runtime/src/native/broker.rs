@@ -23,6 +23,7 @@ pub struct NativeSessions {
     pub(super) timeout_secs: u64,
     pub(super) waiting: Mutex<Option<Waiting>>,
     pub(super) registered: tokio::sync::Notify,
+    pub(super) changed: Option<std::sync::Arc<tokio::sync::Notify>>,
     pub(super) host_session_id: Option<String>,
 }
 
@@ -34,6 +35,7 @@ impl NativeSessions {
             timeout_secs,
             waiting: Mutex::new(None),
             registered: tokio::sync::Notify::new(),
+            changed: None,
             host_session_id: None,
         }
     }

@@ -45,6 +45,7 @@ pub struct NativeProgress {
 struct Active {
     broker: Arc<NativeSessions>,
     task: JoinHandle<Result<StepOutcome>>,
+    finished: Arc<std::sync::atomic::AtomicBool>,
     // Registry and task both hold the lock, including while cancellation is being delivered.
     _lock: Arc<RepoLock>,
 }
@@ -59,9 +60,46 @@ impl Drop for Active {
 #[derive(Default)]
 pub struct NativeHost {
     active: Mutex<HashMap<PathBuf, Active>>,
+    changed: Arc<tokio::sync::Notify>,
+}
+
+struct WakeOnDrop(Arc<tokio::sync::Notify>, Arc<std::sync::atomic::AtomicBool>);
+impl Drop for WakeOnDrop {
+    fn drop(&mut self) {
+        self.1.store(true, std::sync::atomic::Ordering::Release);
+        self.0.notify_waiters();
+    }
 }
 
 impl NativeHost {
+    /// Wait for a dispatch or completed engine work without holding the registry lock.
+    pub async fn wait_ready(&self, root: &Path, timeout_ms: u64) {
+        let wait = async {
+            loop {
+                let notified = self.changed.notified();
+                tokio::pin!(notified);
+                notified.as_mut().enable();
+                {
+                    let active = self.active.lock().await;
+                    let Some(running) = active.get(root) else {
+                        return;
+                    };
+                    if running.finished.load(std::sync::atomic::Ordering::Acquire)
+                        || running.broker.dispatch().map_or(true, |d| d.is_some())
+                    {
+                        return;
+                    }
+                }
+                notified.await;
+            }
+        };
+        let _ = tokio::time::timeout(
+            std::time::Duration::from_millis(timeout_ms.min(30_000)),
+            wait,
+        )
+        .await;
+    }
+
     /// Stop engine-owned commands before the MCP process exits; native children remain host-owned.
     pub async fn shutdown(&self) {
         let mut active = self.active.lock().await;
@@ -482,11 +520,15 @@ impl NativeHost {
             if let Some(scope) = input.host_session_id {
                 sessions = sessions.with_host_session_id(scope);
             }
+            sessions.changed = Some(self.changed.clone());
             let broker = Arc::new(sessions);
             let engine = Engine::open(root)?;
             let sessions = broker.clone();
             let task_lock = lock.clone();
+            let finished = Arc::new(std::sync::atomic::AtomicBool::new(false));
+            let wake = WakeOnDrop(self.changed.clone(), finished.clone());
             let task = tokio::spawn(async move {
+                let _wake = wake;
                 let _lock = task_lock;
                 if let Some(request) = input.request.as_deref() {
                     let outcome = engine.start_planning(request, input.plan_only)?;
@@ -521,6 +563,7 @@ impl NativeHost {
                 Active {
                     broker,
                     task,
+                    finished,
                     _lock: lock,
                 },
             );
@@ -655,8 +698,7 @@ fn progress(
     } else if running {
         outcome.next = "native_wait".into();
         outcome.message =
-            "Hwahap is validating or preparing the next native dispatch; poll after one second."
-                .into();
+            "Hwahap is validating; hwahap_step waits up to 30 seconds for the next action.".into();
     }
     Ok(NativeProgress { outcome, dispatch })
 }
