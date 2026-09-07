@@ -305,6 +305,9 @@ pub fn reusable_pass(
     request: &VerificationRequest,
 ) -> Result<Option<(String, String)>> {
     let records = recover_verifications(store)?;
+    if request.kind == Kind::Preflight {
+        return Ok(None);
+    }
     if records.values().any(|r| r.status == Status::Started) {
         return Err(rejected(
             "verification recovery requires confirmation that previous commands stopped",

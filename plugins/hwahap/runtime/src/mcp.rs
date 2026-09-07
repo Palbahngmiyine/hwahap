@@ -439,16 +439,21 @@ impl Hwahap {
                 .map_err(to_error_data)?;
         }
         let store = crate::state::Store::open(&root).map_err(to_error_data)?;
-        if let Some(path) = args.usage_session_path {
-            crate::cost::meter::attach(&store, std::path::Path::new(&path), false)
-                .map_err(to_error_data)?;
-        }
+        let usage_attachment = args.usage_session_path.map(|path| {
+            match crate::cost::meter::attach(&store, std::path::Path::new(&path), false) {
+                Ok(session) => serde_json::json!({"status":"attached","session_id":session,"coverage":"from attachment baseline"}),
+                Err(error) => serde_json::json!({"status":"unavailable","error":error.to_string()}),
+            }
+        });
         let mut report = RunReport::from(outcome);
         report.attach_questions(&root).map_err(to_error_data)?;
         report.cost_evidence = Some(crate::cost::for_report(
             crate::cost::persist(&store).map_err(to_error_data)?,
             args.include_cost_evidence,
         ));
+        if let Some(attachment) = usage_attachment {
+            report.cost_evidence.as_mut().expect("cost report")["usage_attachment"] = attachment;
+        }
         Ok(Json(report))
     }
 
@@ -663,6 +668,43 @@ mod tests {
                 "the first 512 chars omit {expected:?}"
             );
         }
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn invalid_optional_usage_keeps_the_committed_action_visible() {
+        let dir = tempfile::tempdir().unwrap();
+        for args in [
+            vec!["init", "-b", "main"],
+            vec![
+                "-c",
+                "user.name=Test",
+                "-c",
+                "user.email=test@example.invalid",
+                "commit",
+                "--allow-empty",
+                "-m",
+                "seed",
+            ],
+        ] {
+            assert!(std::process::Command::new("git")
+                .args(args)
+                .current_dir(dir.path())
+                .output()
+                .unwrap()
+                .status
+                .success());
+        }
+        std::fs::write(dir.path().join(".git/info/exclude"), "/.hwahap/\n").unwrap();
+        let server = Hwahap::new();
+        let args = serde_json::from_value(serde_json::json!({"cwd":dir.path(),"host_session_id":"fixture","request":"Inspect the empty repository","plan_only":true,"usage_session_path":dir.path().join("missing.jsonl")})).unwrap();
+        let Json(report) = server.step(Parameters(args)).await.unwrap();
+        assert!(!report.run_id.is_empty());
+        assert_eq!(
+            report.cost_evidence.unwrap()["usage_attachment"]["status"],
+            "unavailable"
+        );
+        server.native.shutdown().await;
     }
 
     #[test]

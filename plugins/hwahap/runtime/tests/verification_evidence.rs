@@ -761,3 +761,23 @@ fn reuse_configuration_requires_an_environment_revision() {
     );
     assert_ne!(environment_digest("v1"), environment_digest("v2"));
 }
+
+#[test]
+fn preflight_success_is_never_reused_for_external_recovery_state() {
+    let dir = tempfile::tempdir().unwrap();
+    let store = Store::open(dir.path()).unwrap();
+    let clock = FixedClock::new("2026-09-07T00:00:00Z");
+    let mut request = request();
+    request.kind = Kind::Preflight;
+    let started = start(&store, &clock, request.clone()).unwrap();
+    record_verification(
+        &store,
+        &clock,
+        started,
+        Status::Passed,
+        Some(0),
+        "recovered",
+    )
+    .unwrap();
+    assert!(reusable_pass(&store, &request).unwrap().is_none());
+}
