@@ -158,6 +158,9 @@ checks pass, and the final review is still fresh.";
 /// Arguments to `hwahap_step`.
 #[derive(Debug, Clone, Deserialize, JsonSchema)]
 pub struct StepArgs {
+    /// Optional Plan/Goal references and callable features from the host.
+    #[serde(default)]
+    pub host_context: Option<crate::host_context::HostContext>,
     /// Include full cost evidence; the default returns a bounded summary and artifact reference.
     #[serde(default)]
     pub include_cost_evidence: bool,
@@ -254,6 +257,8 @@ pub struct NativeBriefReference {
 /// What every tool returns.
 #[derive(Debug, Clone, Serialize, JsonSchema)]
 pub struct RunReport {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub host_context: Option<serde_json::Value>,
     /// Next page of the current planning frontier for the host's actual user-question UI.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub question_batch: Option<crate::dialogue::QuestionBatch>,
@@ -286,6 +291,7 @@ pub struct RunReport {
 impl From<StepOutcome> for RunReport {
     fn from(outcome: StepOutcome) -> Self {
         RunReport {
+            host_context: None,
             question_batch: None,
             run_id: outcome.run_id,
             phase: outcome.phase,
@@ -393,6 +399,11 @@ impl Hwahap {
         Parameters(args): Parameters<StepArgs>,
     ) -> Result<Json<RunReport>, ErrorData> {
         let root = root_for(&args.cwd)?;
+        if let Some(context) = &args.host_context {
+            context
+                .validate(&args.host_session_id)
+                .map_err(to_error_data)?;
+        }
         let host_session_id = args.host_session_id.clone();
         let mut outcome = self
             .native
@@ -445,7 +456,19 @@ impl Hwahap {
                 Err(error) => serde_json::json!({"status":"unavailable","error":error.to_string()}),
             }
         });
+        let context_result = args
+            .host_context
+            .as_ref()
+            .map(|context| crate::host_context::record(&store, context));
         let mut report = RunReport::from(outcome);
+        report.host_context = match context_result {
+            Some(Err(error)) => {
+                Some(serde_json::json!({"status":"unavailable","error":error.to_string()}))
+            }
+            _ => crate::host_context::report(&store).unwrap_or_else(|error| {
+                Some(serde_json::json!({"status":"unavailable","error":error.to_string()}))
+            }),
+        };
         report.attach_questions(&root).map_err(to_error_data)?;
         report.cost_evidence = Some(crate::cost::for_report(
             crate::cost::persist(&store).map_err(to_error_data)?,
@@ -478,6 +501,9 @@ impl Hwahap {
         let outcome = self.native.status(&root).await.map_err(to_error_data)?;
         let mut report = RunReport::from(outcome);
         report.attach_questions(&root).map_err(to_error_data)?;
+        report.host_context =
+            crate::host_context::report(&crate::state::Store::open(&root).map_err(to_error_data)?)
+                .map_err(to_error_data)?;
         report.compact_native();
         report.cost_evidence = Some(crate::cost::for_report(
             crate::cost::summary(&crate::state::Store::open(&root).map_err(to_error_data)?)
@@ -697,9 +723,13 @@ mod tests {
         }
         std::fs::write(dir.path().join(".git/info/exclude"), "/.hwahap/\n").unwrap();
         let server = Hwahap::new();
-        let args = serde_json::from_value(serde_json::json!({"cwd":dir.path(),"host_session_id":"fixture","request":"Inspect the empty repository","plan_only":true,"usage_session_path":dir.path().join("missing.jsonl")})).unwrap();
+        let args = serde_json::from_value(serde_json::json!({"cwd":dir.path(),"host_session_id":"fixture","request":"Inspect the empty repository","plan_only":true,"usage_session_path":dir.path().join("missing.jsonl"),"host_context":{"provider":"codex","task_id":"fixture","goal_ref":"goal:fixture"}})).unwrap();
         let Json(report) = server.step(Parameters(args)).await.unwrap();
         assert!(!report.run_id.is_empty());
+        assert_eq!(
+            report.host_context.as_ref().unwrap()["references"]["goal_ref"],
+            "goal:fixture"
+        );
         assert_eq!(
             report.cost_evidence.unwrap()["usage_attachment"]["status"],
             "unavailable"

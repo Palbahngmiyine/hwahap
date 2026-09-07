@@ -17,6 +17,7 @@ pub mod error;
 pub mod forge;
 pub mod frontier;
 pub mod git;
+pub mod host_context;
 pub mod mcp;
 pub mod native;
 pub mod plan;
