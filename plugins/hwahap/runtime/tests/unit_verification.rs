@@ -6,6 +6,7 @@ use hwahap::{
 
 fn plan() -> Plan {
     BuildRequest {
+        task_profiles: Default::default(),
         verification_inputs: vec![],
         user_instruction: "Build the specified contract".into(),
         objective: "Each unit proves its own acceptance".into(),

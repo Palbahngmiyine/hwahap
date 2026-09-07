@@ -7,6 +7,7 @@ use hwahap::state::Store;
 
 fn request() -> BuildRequest {
     BuildRequest {
+        task_profiles: Default::default(),
         verification_inputs: vec![],
         user_instruction: "기획 제외하고 구현해 줘".into(),
         objective: "Create a checked feature".into(),

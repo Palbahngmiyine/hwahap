@@ -28,6 +28,7 @@ fn approved(f: &Fixture) -> ApprovedPlanRequest {
             source_head: git(&f.repo, &["rev-parse", "HEAD"]),
         },
         contract: BuildRequest {
+            task_profiles: Default::default(),
             verification_inputs: vec![],
             user_instruction: instruction.into(),
             objective: "Write feature".into(),
@@ -384,6 +385,7 @@ async fn t09_t13_t17_all_entry_paths_adjust_revalidate_review_and_ship_current_c
         let before_head = git(&f.worktree(), &["rev-parse", "HEAD"]);
         engine
             .adjust_build(&hwahap::engine::AdjustBuildRequest {
+                task_profiles: Default::default(),
                 user_instruction: "Correct feature formatting under the same contract".into(),
                 contract_digest: plan.digest().unwrap().to_string(),
                 unit_ids: vec!["U1".into()],

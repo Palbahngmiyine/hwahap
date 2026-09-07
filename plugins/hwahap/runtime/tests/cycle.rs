@@ -2197,6 +2197,7 @@ async fn direct_build_adjust_preserves_branch_and_enters_plan() {
     );
     let engine = fixture.engine();
     let input = hwahap::engine::BuildRequest {
+        task_profiles: Default::default(),
         verification_inputs: vec![],
         user_instruction: "Build without planning".into(),
         objective: REQUEST.into(),

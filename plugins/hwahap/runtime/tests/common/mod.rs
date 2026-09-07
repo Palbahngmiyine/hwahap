@@ -198,6 +198,28 @@ impl Script {
             reported_usage: None,
         };
 
+        if let Some(assessment) = &spec.assessment {
+            let context = hwahap::delegation::Context {
+                run_id: run.run_id.clone(),
+                contract_digest: assessment.contract_digest.clone(),
+                role: spec.role,
+                unit: spec.unit.clone(),
+                completed: assessment.topology.predecessors.iter().cloned().collect(),
+                write_paths: assessment.topology.write_paths.clone(),
+                shared_state: false,
+                writer_available: true,
+                bound: Some((wanted.model.clone(), wanted.effort.as_str().into())),
+                reviewer_bindings: Default::default(),
+                free_slots: 3,
+                preflight_verified: true,
+            };
+            let decision =
+                hwahap::delegation::decide(&snapshot, &host, Some(assessment), &context)?;
+            receipt.selection = decision.selection.clone().expect("scripted selection");
+            receipt.assessment = Some(assessment.clone());
+            receipt.decision = Some(decision);
+        }
+
         let mut native_id = None;
         let message = match step.reply {
             Reply::NativeReview { message, agent_id } => {

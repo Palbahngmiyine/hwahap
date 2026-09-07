@@ -12,6 +12,7 @@ async fn draft() -> Fixture {
     let engine = f.engine();
     engine
         .start_build(&BuildRequest {
+            task_profiles: Default::default(),
             verification_inputs: vec![],
             user_instruction: "Implement without planning".into(),
             objective: "Create a checked feature".into(),
@@ -182,4 +183,69 @@ async fn failed_ci_enters_repair_without_spending_review_calls() {
             .unwrap()
             .is_empty()
     );
+}
+
+#[tokio::test]
+async fn frozen_low_risk_contract_accepts_one_independent_clean_review() {
+    let f = Fixture::new();
+    git(&f.repo, &["update-ref", "refs/remotes/origin/main", "HEAD"]);
+    let profile: hwahap::delegation::TaskProfile = serde_json::from_value(serde_json::json!({"requirements":{"capabilities":{"implementation":2},"depth":"focused"},"risk":{"failure_cost":0,"reversibility":0,"blast_radius":0},"topology":{"predecessors":[],"coupling":"independent","shared_resources":[],"writer_owner":"U1","separable":true,"write_paths":["feature.txt"]},"evidence":["one disposable file; fixed assertion"],"recovery":null})).unwrap();
+    let mut run_profile = profile.clone();
+    run_profile.topology.writer_owner = None;
+    let mut request = BuildRequest {
+        task_profiles: [("U1".into(), profile), ("run".into(), run_profile)].into(),
+        verification_inputs: vec![],
+        user_instruction: "Implement the approved narrow fixture".into(),
+        objective: "fixture".into(),
+        base_branch: "main".into(),
+        branch: "codex/single-review".into(),
+        full_suite: "test -f feature.txt".into(),
+        units: vec![BuildUnit {
+            title: "feature".into(),
+            acceptance: "feature exists".into(),
+            paths: vec!["feature.txt".into()],
+            test_command: "test -f feature.txt".into(),
+        }],
+    };
+    // Run writer ownership is keyed by the generated run; only unit profiles are needed by the scripted author.
+    request
+        .task_profiles
+        .get_mut("run")
+        .unwrap()
+        .topology
+        .write_paths = vec!["feature.txt".into()];
+    let engine = f.engine();
+    engine.start_build(&request).unwrap();
+    let script = Script::new(vec![
+        step(
+            Role::Implementer,
+            Reply::write(
+                &[("feature.txt", "ready")],
+                r#"{"status":"completed","summary":"ready","conflict":null}"#,
+            ),
+        ),
+        step(
+            Role::UnitReviewer,
+            Reply::say(r#"{"verdict":"pass","findings":[]}"#),
+        ),
+    ]);
+    engine.step_with(&script, None, None).await.unwrap();
+    engine.step_with(&script, None, None).await.unwrap();
+    let review = Script::new(vec![step(Role::UnitReviewer, Reply::PrAttack)]);
+    let done = engine.step_with(&review, None, None).await.unwrap();
+    assert_eq!(done.state, "awaiting_adjust_or_ship");
+    let store = Store::open(&f.repo).unwrap();
+    let progress = ReviewProgress::load(&store).unwrap().unwrap();
+    assert!(!store
+        .artifacts_path()
+        .join(progress.artifact("defense").unwrap())
+        .exists());
+    let challenge = store
+        .read_plan()
+        .unwrap()
+        .unwrap()
+        .digest()
+        .unwrap()
+        .challenge();
+    engine.ship(&format!("SHIP {challenge}")).unwrap();
 }

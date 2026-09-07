@@ -486,6 +486,7 @@ async fn high_risk_case(review_failure: bool, recovery_failure: bool, interrupti
     };
     engine
         .start_build(&BuildRequest {
+            task_profiles: Default::default(),
             verification_inputs: vec![],
             user_instruction: "Implement the isolated fixture".into(),
             objective: "fixture".into(),

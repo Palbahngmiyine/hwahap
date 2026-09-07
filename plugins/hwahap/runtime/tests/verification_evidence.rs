@@ -122,6 +122,7 @@ async fn t14_interrupted_command_requires_matching_stop_acknowledgment() {
     common::git(&f.repo, &["update-ref", "refs/remotes/origin/main", "HEAD"]);
     f.engine()
         .start_build(&BuildRequest {
+            task_profiles: Default::default(),
             verification_inputs: vec![],
             user_instruction: "Build the contract".into(),
             objective: "verify recovery".into(),
@@ -276,6 +277,7 @@ fn t14_snapshot_before_completion_recovers_and_ahead_snapshot_is_rejected() {
 fn t11_inputs_are_preserved_in_build_and_change_the_unit_contract() {
     use hwahap::engine::{BuildRequest, BuildUnit};
     let mut input = BuildRequest {
+        task_profiles: Default::default(),
         user_instruction: "implement".into(),
         objective: "fixture".into(),
         base_branch: "main".into(),
@@ -319,6 +321,7 @@ async fn t13_t17_final_checks_every_unit_and_ship_rejects_changed_declared_input
     git(&f.repo, &["update-ref", "refs/remotes/origin/main", "HEAD"]);
     let command = "test -f src/existing.txt && test \"$(cat input.fixture)\" = one";
     let input = BuildRequest {
+        task_profiles: Default::default(),
         user_instruction: "Implement both units".into(),
         objective: "two independent files".into(),
         base_branch: "main".into(),
@@ -447,6 +450,7 @@ async fn t11_mutating_tests_and_timeouts_preserve_failure_and_never_accept_work(
         let engine = f.engine();
         engine
             .start_build(&BuildRequest {
+                task_profiles: Default::default(),
                 verification_inputs: vec!["input.fixture".into()],
                 user_instruction: "Implement".into(),
                 objective: "mutation failure".into(),
@@ -511,6 +515,7 @@ async fn t14_cancelled_live_command_remains_unresolved_until_owned_stop_recovery
     let engine = f.engine();
     engine
         .start_build(&BuildRequest {
+            task_profiles: Default::default(),
             verification_inputs: vec![],
             user_instruction: "Implement".into(),
             objective: "cancel command".into(),
