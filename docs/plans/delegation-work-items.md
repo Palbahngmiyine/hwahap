@@ -111,8 +111,8 @@
 | --- | --- | --- |
 | FactFinder | repository_analysis=1 | routine |
 | Implementer | implementation=2 | focused |
-| PlanCritic, UnitReviewer, FailureDiagnosis | repository_analysis=2, adversarial_review=2 | deep |
-| ColdConsumer, FinalReview | adversarial_review=2, security_review=2 | deep |
+| PlanCritic, UnitReviewer, FailureDiagnosis | repository_analysis=2, adversarial_review=2 | focused |
+| ColdConsumer, FinalReview | adversarial_review=2, security_review=2 | focused |
 | Recommender, PlanSynthesis, ConflictReplan, Rework | cross_module_reasoning=2, implementation=2 | deep |
 
 - 호스트 관찰은 부모 ID·관찰 시각·출처·모델/effort·도구·slot을 갖는다. 현재보다 미래인 시각, 300초 초과, 이전 관찰로의 역행은 거부한다. 관찰 갱신은 한 native action에 동반 가능한 메타데이터다.

@@ -20,9 +20,9 @@ impl Engine {
         progress: &ReviewProgress,
     ) -> Result<()> {
         let cost = crate::cost::persist(&self.store)?;
-        let report = format!("{}\n## PR review\n\nHead: `{}`; round: {}; repairs: {}; stage: {:?}.\n\nDetailed review and reproduction evidence remains local in `.hwahap/artifacts`.\n\n## Cost evidence\n\n```json\n{}\n```\n",
+        let report = format!("{}\n## PR review\n\nHead: `{}`; round: {}; repairs: {}; stage: {:?}.\n\nDetailed review and reproduction evidence remains local in `.hwahap/artifacts`.\n\n{}",
             self.report_markdown(plan, run), progress.binding.head, progress.round,
-            progress.repairs, progress.stage, serde_json::to_string_pretty(&cost).map_err(|e| Error::Internal(e.to_string()))?);
+            progress.repairs, progress.stage, crate::cost::report_markdown(&cost));
         let pr = self.forge.update_draft(
             &self.store.worktree_path(),
             &plan.base_branch,

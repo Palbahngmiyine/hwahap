@@ -1266,9 +1266,9 @@ impl Engine {
         }
         self.git.push(&worktree, "origin", &run.branch)?;
         let report = format!(
-            "{}\n## Cost evidence\n\n```json\n{}\n```\n",
+            "{}\n{}",
             self.report_markdown(&plan, &run),
-            crate::cost::persist(&self.store)?
+            crate::cost::report_markdown(&crate::cost::persist(&self.store)?)
         );
         self.store.write_report(&report)?;
         let pr = if let Some(previous) = &previous {
@@ -1922,8 +1922,7 @@ impl Engine {
             "## Conclusion\n\n{}\n\n## Evidence\n\n- Plan digest: `{}`\n- Units accepted: {}\n\
              - Full suite: `{}`\n\n## Verification\n\nEvery unit's tests and the full suite were run \
              by Hwahap and judged by exit status. Changed paths were checked against each unit's \
-             declared scope.\n\n## Limitations\n\nHwahap opened this pull request as a draft and did \
-             not merge it.\n",
+             declared scope.\n",
             plan.goal.statement,
             run.plan_digest
                 .as_ref()

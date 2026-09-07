@@ -271,6 +271,18 @@ pub fn for_report(value: serde_json::Value, detailed: bool) -> serde_json::Value
     })
 }
 
+/// Public progress includes coverage and a local evidence pointer, independent of history size.
+pub fn report_markdown(value: &serde_json::Value) -> String {
+    let count = |key: &str| {
+        value["total"][key]
+            .as_u64()
+            .map(|n| n.to_string())
+            .unwrap_or_else(|| "unknown".into())
+    };
+    format!("## Usage\n\nNative requests: {}; completed: {}; usage reported: {}; missing usage: {}. Actual billed cost: unknown.\n\nDetailed counters, timing and optional estimates: local `.hwahap/usage.json`.\n",
+        count("requests"), count("completions"), count("usage_reported_completions"), count("requests_without_reported_usage"))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
