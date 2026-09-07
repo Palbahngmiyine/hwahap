@@ -132,7 +132,7 @@ fn policy_routes_risk_shared_state_dependencies_and_bound_capability() {
     context.preflight_verified = true;
     assert_eq!(
         decide(&snapshot, &host, Some(&a), &context).unwrap().route,
-        Route::Coordinator
+        Route::Worker
     );
     a.risk.failure_cost = Some(0);
     a.topology.coupling = Coupling::Shared;
@@ -353,21 +353,13 @@ async fn actual_dispatch_reuses_worker_and_falls_back_to_capable_parent() {
 }
 #[cfg(unix)]
 #[tokio::test]
-async fn actual_overlap_routes_parent_and_missing_assessment_waits() {
+async fn actual_overlap_keeps_capable_worker_and_missing_assessment_waits() {
     let (f, store, a) = native_fixture(true);
     assert!(refusal(&f, &store, &a, false)
         .await
         .contains("assessment_missing"));
     assert_eq!(
-        dispatch_job(
-            &f,
-            &store,
-            &a,
-            NativeLane::Coordinator,
-            "gpt-6-astra",
-            "coordinator"
-        )
-        .await,
+        dispatch_job(&f, &store, &a, NativeLane::Worker, "gpt-5.6-luna", "worker").await,
         "shared_state"
     );
 }
@@ -399,10 +391,12 @@ async fn actual_capacity_and_reviewer_availability_are_enforced() {
             1 => {
                 a.role = Role::UnitReviewer;
                 host.models.remove("gpt-6-astra");
+                host.models.remove("gpt-5.6-terra");
                 "model_unavailable"
             }
             2 => {
                 a.role = Role::UnitReviewer;
+                host.models.remove("gpt-5.6-terra");
                 host.models.get_mut("gpt-6-astra").unwrap().efforts = vec!["unsupported".into()];
                 "model_unavailable"
             }
@@ -410,9 +404,10 @@ async fn actual_capacity_and_reviewer_availability_are_enforced() {
                 a.requirements
                     .capabilities
                     .insert("adversarial_review".into(), 3);
+                host.available_slots = 2;
                 host.parent_model = "gpt-5.6-luna".into();
                 host.parent_effort = "medium".into();
-                "bound_capability_insufficient"
+                "slot_unavailable"
             }
         };
         hwahap::catalog::host::observe(&store, &hwahap::clock::SystemClock, "parent", &host)
@@ -732,7 +727,7 @@ async fn high_risk_case(review_failure: bool, recovery_failure: bool, interrupti
 
 #[cfg(unix)]
 #[tokio::test]
-async fn shared_mutable_resource_routes_parent_without_overlapping_paths() {
+async fn shared_mutable_resource_preserves_model_and_serial_writer() {
     let (f, store, mut a) = native_fixture(false);
     a.topology.shared_resources = vec!["database:migrations".into()];
     let mut other = a.clone();
@@ -741,15 +736,7 @@ async fn shared_mutable_resource_routes_parent_without_overlapping_paths() {
     other.topology.write_paths = vec!["output-2".into()];
     hwahap::delegation::store::record(&store, &other).unwrap();
     assert_eq!(
-        dispatch_job(
-            &f,
-            &store,
-            &a,
-            NativeLane::Coordinator,
-            "gpt-6-astra",
-            "coordinator"
-        )
-        .await,
+        dispatch_job(&f, &store, &a, NativeLane::Worker, "gpt-5.6-luna", "worker").await,
         "shared_state"
     );
 }
@@ -1074,15 +1061,24 @@ async fn author_available_without_independent_reviewers_waits_before_dispatch() 
 
 #[cfg(unix)]
 #[tokio::test]
-async fn author_waits_when_slots_cannot_cover_worker_and_both_reviewers() {
+async fn author_reuses_parent_when_slots_cover_only_independent_reviewers() {
     let (f, store, a) = native_fixture(false);
     let mut observed = hwahap::catalog::host::latest(&store).unwrap().unwrap();
     observed.available_slots = 2;
     hwahap::catalog::host::observe(&store, &hwahap::clock::SystemClock, "parent", &observed)
         .unwrap();
-    assert!(refusal(&f, &store, &a, true)
-        .await
-        .contains("slot_unavailable"));
+    assert_eq!(
+        dispatch_job(
+            &f,
+            &store,
+            &a,
+            NativeLane::Coordinator,
+            "gpt-6-astra",
+            "coordinator"
+        )
+        .await,
+        "reuse_parent_capacity"
+    );
 }
 
 #[cfg(unix)]
@@ -1100,4 +1096,18 @@ async fn interrupted_rejected_high_risk_candidate_reaches_exhausted_budget() {
 #[tokio::test]
 async fn interrupted_rejected_candidate_resumes_partly_completed_cleanup_from_backup() {
     high_risk_case(false, false, 4).await;
+}
+
+#[test]
+fn routine_review_uses_terra_and_risk_preserves_strong_review() {
+    let (snapshot, host, mut context) = policy_fixture();
+    let mut a = assessment();
+    a.role = Role::UnitReviewer;
+    context.role = a.role;
+    let routine = decide(&snapshot, &host, Some(&a), &context).unwrap();
+    assert_eq!(routine.selection.unwrap().model, "gpt-5.6-terra");
+    a.risk.blast_radius = Some(2);
+    let risky = decide(&snapshot, &host, Some(&a), &context).unwrap();
+    assert_eq!(risky.selection.unwrap().model, "gpt-6-astra");
+    assert_eq!(risky.obligations.review_depth, Depth::Deep);
 }

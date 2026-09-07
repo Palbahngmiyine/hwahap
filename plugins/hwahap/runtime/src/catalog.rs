@@ -152,7 +152,7 @@ pub fn bundled() -> Catalog {
             Role::Implementer => (&[("implementation", 2)], Depth::Focused),
             Role::PlanCritic | Role::UnitReviewer | Role::FailureDiagnosis => (
                 &[("repository_analysis", 2), ("adversarial_review", 2)],
-                Depth::Deep,
+                Depth::Focused,
             ),
             Role::ColdConsumer | Role::FinalReview => (
                 &[("adversarial_review", 2), ("security_review", 2)],
@@ -186,7 +186,7 @@ pub fn bundled() -> Catalog {
     };
     Catalog {
         schema: "hwahap/catalog/v1".into(),
-        revision: "bundled-v1".into(),
+        revision: "bundled-v2".into(),
         role_requirements,
         models: vec![
             model(
@@ -203,6 +203,8 @@ pub fn bundled() -> Catalog {
                     ("repository_analysis", 2),
                     ("implementation", 2),
                     ("cross_module_reasoning", 2),
+                    ("adversarial_review", 2),
+                    ("security_review", 2),
                 ],
                 vec![Depth::Routine, Depth::Focused, Depth::Deep],
                 "high",

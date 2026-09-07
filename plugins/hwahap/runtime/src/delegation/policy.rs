@@ -79,6 +79,7 @@ pub fn decide(
     }
     let high = assessment.risk.high()?;
     decision.obligations.recovery_validation = high;
+    decision.obligations.review_depth = if high { Depth::Deep } else { Depth::Focused };
     let requirements = assessment.merged(&snapshot.catalog.role_requirements[&context.role])?;
     let tools = crate::catalog::tools_for(context.role);
     let mut review_slots = 0;
@@ -115,8 +116,7 @@ pub fn decide(
 
     let independent = matches!(decision.lane, NativeLane::Critic | NativeLane::Auditor);
     let shared = context.shared_state || assessment.topology.coupling == Coupling::Shared;
-    let parent_required =
-        !independent && (high || shared || decision.lane == NativeLane::Coordinator);
+    let parent_required = !independent && decision.lane == NativeLane::Coordinator;
     if high && writer && !context.preflight_verified {
         return finish(decision, Route::Wait, "recovery_validation_required");
     }
@@ -142,17 +142,29 @@ pub fn decide(
         }
     } else {
         if context.free_slots <= review_slots {
-            return finish(decision, Route::Wait, "slot_unavailable");
+            if writer
+                && snapshot
+                    .catalog
+                    .supports(&host.parent_model, &host.parent_effort, &requirements)
+                && host.available(&host.parent_model, &host.parent_effort, &tools)
+            {
+                decision.lane = NativeLane::Coordinator;
+                reason = "reuse_parent_capacity";
+                (host.parent_model.clone(), host.parent_effort.clone())
+            } else {
+                return finish(decision, Route::Wait, "slot_unavailable");
+            }
+        } else {
+            let Some((model, effort)) = snapshot
+                .catalog
+                .candidates(&requirements)
+                .into_iter()
+                .find(|(m, e)| host.available(m, e, &tools))
+            else {
+                return finish(decision, Route::Wait, "model_unavailable");
+            };
+            (model.to_owned(), effort.to_owned())
         }
-        let Some((model, effort)) = snapshot
-            .catalog
-            .candidates(&requirements)
-            .into_iter()
-            .find(|(m, e)| host.available(m, e, &tools))
-        else {
-            return finish(decision, Route::Wait, "model_unavailable");
-        };
-        (model.to_owned(), effort.to_owned())
     };
     if !snapshot.catalog.supports(&pair.0, &pair.1, &requirements) {
         return finish(decision, Route::Wait, "bound_capability_insufficient");

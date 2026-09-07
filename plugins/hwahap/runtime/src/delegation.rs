@@ -108,6 +108,18 @@ impl TaskAssessment {
         }
         combined.depth = combined.depth.max(self.requirements.depth);
         if self.risk.high()? {
+            if matches!(
+                self.role,
+                Role::UnitReviewer
+                    | Role::FinalReview
+                    | Role::PlanCritic
+                    | Role::ColdConsumer
+                    | Role::FailureDiagnosis
+            ) {
+                for capability in ["adversarial_review", "security_review"] {
+                    combined.capabilities.insert(capability.into(), 3);
+                }
+            }
             combined.depth =
                 combined
                     .depth
